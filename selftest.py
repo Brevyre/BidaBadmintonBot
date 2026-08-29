@@ -53,6 +53,33 @@ def main():
     check("nonsense rejected", H.parse_time("half seven"), None)
     check("25:00 rejected", H.parse_time("25:00"), None)
 
+    print("\nDuration parsing")
+    check("bare 1 -> 1 hour", H.parse_duration("1"), 60)
+    check("bare 2 -> 2 hours", H.parse_duration("2"), 120)
+    check("1.5", H.parse_duration("1.5"), 90)
+    check("1.5h", H.parse_duration("1.5h"), 90)
+    check("2 hours", H.parse_duration("2 hours"), 120)
+    check("90 -> minutes", H.parse_duration("90"), 90)
+    check("90 mins", H.parse_duration("90 mins"), 90)
+    check("1h30", H.parse_duration("1h30"), 90)
+    check("too short rejected", H.parse_duration("10"), None)
+    check("too long rejected", H.parse_duration("9h"), None)
+    check("nonsense rejected", H.parse_duration("a while"), None)
+
+    print("\nDuration formatting")
+    check("60", H.fmt_duration(60), "1 hour")
+    check("120", H.fmt_duration(120), "2 hours")
+    check("90", H.fmt_duration(90), "1.5 hours")
+    check("75", H.fmt_duration(75), "1h 15m")
+
+    print("\nStart-finish display")
+    _e = H.to_epoch(H.parse_date("6 Sep"), 20, 0)
+    check("1 hour range", H.fmt_when_range(_e, 60).endswith("8:00pm-9:00pm"), True)
+    check("2 hour range", H.fmt_when_range(_e, 120).endswith("8:00pm-10:00pm"), True)
+    check("crosses midnight",
+          H.fmt_when_range(H.to_epoch(H.parse_date("6 Sep"), 23, 0), 120)
+          .endswith("11:00pm-1:00am"), True)
+
     print("\nSeats and the agreed guest rule")
     start = H.to_epoch(H.parse_date("6 Sep"), 20, 0)
     db.create_event("E001", 100, start, 120, "Test Hall", 8)
@@ -110,6 +137,18 @@ def main():
     check("ics has one event", ics.count("BEGIN:VEVENT"), 1)
     check("ics has location", "LOCATION:Test Hall" in ics, True)
     check("ics mentions guests", "2 guests" in ics, True)
+
+    # The calendar end time must follow the chosen length, not a fixed 2 hours
+    def _dtend_hour(mins):
+        db.update_event("E001", duration_min=mins)
+        txt = H.build_ics(db.get_event("E001")).getvalue().decode("utf-8")
+        line = [l for l in txt.split("\r\n") if l.startswith("DTEND")][0]
+        return line[-7:-5]
+
+    check("1h event ends 1h after start", _dtend_hour(60), "13")
+    check("2h event ends 2h after start", _dtend_hour(120), "14")
+    check("90m event ends 90m after start", _dtend_hour(90), "13")
+    db.update_event("E001", duration_min=120)
     check("ics has no alarm", "VALARM" in ics, False)
     check("no line over 75 octets",
           max(len(l.encode()) for l in ics.split("\r\n")) <= 75, True)

@@ -55,6 +55,58 @@ def fmt_date_only(epoch):
     return f"{dt:%a} {dt.day} {dt:%b}"
 
 
+def fmt_duration(minutes):
+    """60 -> '1 hour', 90 -> '1.5 hours', 75 -> '1h 15m'."""
+    if minutes % 60 == 0:
+        h = minutes // 60
+        return "1 hour" if h == 1 else f"{h} hours"
+    if minutes % 30 == 0:
+        return f"{minutes / 60:g} hours"
+    if minutes < 60:
+        return f"{minutes} mins"
+    return f"{minutes // 60}h {minutes % 60}m"
+
+
+def fmt_when_range(epoch, minutes):
+    """'Sat 6 Sep, 8:00pm-9:00pm' - start and finish, so people can plan."""
+    end = epoch + minutes * 60
+    return f"{fmt_when(epoch)}-{fmt_time(end)}"
+
+
+def parse_duration(text):
+    """Accepts 1 / 2 / 1.5 / 1.5h / 90 / 90 mins / 1h30. Returns minutes.
+
+    A bare number of 6 or less means hours; anything larger means minutes.
+    Range is 30 minutes to 6 hours.
+    """
+    s = (text or "").strip().lower().replace(" ", "")
+    if not s:
+        return None
+
+    # 1h30 / 1hr30
+    m = re.fullmatch(r"(\d{1,2})h(?:rs?|ours?)?(\d{1,2})", s)
+    if m:
+        mins = int(m.group(1)) * 60 + int(m.group(2))
+        return mins if 30 <= mins <= 360 else None
+
+    m = re.fullmatch(r"(\d+(?:\.\d+)?)(h|hr|hrs|hour|hours|m|min|mins|minute|minutes)?",
+                     s)
+    if not m:
+        return None
+    val = float(m.group(1))
+    unit = m.group(2)
+
+    if unit in ("m", "min", "mins", "minute", "minutes"):
+        mins = val
+    elif unit in ("h", "hr", "hrs", "hour", "hours"):
+        mins = val * 60
+    else:
+        mins = val * 60 if val <= 6 else val
+
+    mins = int(round(mins))
+    return mins if 30 <= mins <= 360 else None
+
+
 def parse_date(text):
     """Accepts today / tomorrow / Sat / 6 Sep / 6 September / 06-09 / 06/09/2026.
 
@@ -310,7 +362,8 @@ def event_detail(event_row):
     host = db.user_label(event_row["host_id"])
 
     lines = [
-        f"\U0001F3F8 {eid} — {fmt_when(event_row['starts_at'])}",
+        f"\U0001F3F8 {eid} — "
+        f"{fmt_when_range(event_row['starts_at'], event_row['duration_min'])}",
         f"\U0001F4CD {event_row['venue']}",
         f"\U0001F465 {taken}/{event_row['capacity']} spots taken",
         f"Host: {host}",

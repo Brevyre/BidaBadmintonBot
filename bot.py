@@ -45,8 +45,8 @@ BOT_START = time.time()
 MISSED = {"count": 0}
 
 # Conversation states
-C_DATE, C_TIME, C_VENUE, C_PLAYERS, C_REVIEW = range(5)
-M_MENU, M_DATE, M_TIME, M_VENUE, M_PLAYERS = range(5, 10)
+C_DATE, C_TIME, C_DURATION, C_VENUE, C_PLAYERS, C_REVIEW = range(6)
+M_MENU, M_DATE, M_TIME, M_DURATION, M_VENUE, M_PLAYERS = range(6, 12)
 
 
 # ============================================================ send helpers ==
@@ -228,6 +228,14 @@ def time_buttons():
     ])
 
 
+def duration_buttons():
+    return kb([
+        [("1 hour", "cn:60"), ("1.5 hours", "cn:90")],
+        [("2 hours", "cn:120"), ("3 hours", "cn:180")],
+        [("Cancel", "ccl")],
+    ])
+
+
 def venue_buttons():
     vs = db.recent_venues(3)
     rows = [[(v, f"cv:{i}")] for i, v in enumerate(vs)]
@@ -288,11 +296,9 @@ async def create_time_btn(update, context):
     hh, mm = q.data[3:].split(":")
     context.user_data["new"]["time"] = (int(hh), int(mm))
     await q.edit_message_reply_markup(None)
-    markup, vs = venue_buttons()
-    text = M.CREATE_STEP_VENUE if vs else M.CREATE_STEP_VENUE_NONE
-    context.user_data["venue_choices"] = vs
-    await q.message.reply_text(text, reply_markup=markup)
-    return C_VENUE
+    await q.message.reply_text(M.CREATE_STEP_DURATION,
+                               reply_markup=duration_buttons())
+    return C_DURATION
 
 
 async def create_time_txt(update, context):
@@ -303,11 +309,38 @@ async def create_time_txt(update, context):
                     time_buttons(), ok=False)
         return C_TIME
     context.user_data["new"]["time"] = t
+    await reply(update, context, M.CREATE_STEP_DURATION, duration_buttons())
+    return C_DURATION
+
+
+async def _ask_venue(update, context, via_query):
     markup, vs = venue_buttons()
     context.user_data["venue_choices"] = vs
-    await reply(update, context, M.CREATE_STEP_VENUE if vs
-                else M.CREATE_STEP_VENUE_NONE, markup)
+    text = M.CREATE_STEP_VENUE if vs else M.CREATE_STEP_VENUE_NONE
+    if via_query:
+        await update.callback_query.message.reply_text(text, reply_markup=markup)
+    else:
+        await reply(update, context, text, markup)
     return C_VENUE
+
+
+async def create_duration_btn(update, context):
+    q = update.callback_query
+    await q.answer()
+    context.user_data["new"]["duration"] = int(q.data[3:])
+    await q.edit_message_reply_markup(None)
+    return await _ask_venue(update, context, True)
+
+
+async def create_duration_txt(update, context):
+    raw = update.effective_message.text
+    mins = H.parse_duration(raw)
+    if mins is None:
+        await reply(update, context, M.BAD_DURATION.format(raw=raw[:30]),
+                    duration_buttons(), ok=False)
+        return C_DURATION
+    context.user_data["new"]["duration"] = mins
+    return await _ask_venue(update, context, False)
 
 
 async def create_venue_btn(update, context):
@@ -339,8 +372,11 @@ async def _show_review(update, context, via_query):
     hh, mm = n["time"]
     epoch = H.to_epoch(n["date"], hh, mm)
     n["starts_at"] = epoch
+    mins = n.get("duration", config.DEFAULT_DURATION_MIN)
+    n["duration"] = mins
     text = M.CREATE_REVIEW.format(
-        when=H.fmt_when(epoch), venue=n["venue"], capacity=n["capacity"]
+        when=H.fmt_when_range(epoch, mins), duration=H.fmt_duration(mins),
+        venue=n["venue"], capacity=n["capacity"]
     )
     if via_query:
         await update.callback_query.message.reply_text(
@@ -385,14 +421,17 @@ async def create_confirm(update, context):
     eid = db.next_event_id()
     db.create_event(
         eid, update.effective_user.id, n["starts_at"],
-        config.DEFAULT_DURATION_MIN, n["venue"], n["capacity"],
+        n.get("duration", config.DEFAULT_DURATION_MIN),
+        n["venue"], n["capacity"],
     )
     ev = db.get_event(eid)
 
     sent = await to_group(
         context,
         M.ANNOUNCE_NEW.format(
-            eid=eid, when=H.fmt_when(ev["starts_at"]), venue=ev["venue"],
+            eid=eid,
+            when=H.fmt_when_range(ev["starts_at"], ev["duration_min"]),
+            venue=ev["venue"],
             capacity=ev["capacity"], host=db.user_label(update.effective_user.id),
         ),
         kb([[("I'm in", f"ply:{eid}"), ("Details", f"shw:{eid}")]]),
@@ -708,7 +747,9 @@ async def _refresh_announcement(context, eid):
         return
     taken = db.seats_taken(eid)
     text = M.ANNOUNCE_NEW.format(
-        eid=eid, when=H.fmt_when(ev["starts_at"]), venue=ev["venue"],
+        eid=eid,
+        when=H.fmt_when_range(ev["starts_at"], ev["duration_min"]),
+        venue=ev["venue"],
         capacity=ev["capacity"], host=db.user_label(ev["host_id"]),
     ).replace(f"0/{ev['capacity']}", f"{taken}/{ev['capacity']}")
     try:
@@ -865,7 +906,8 @@ async def modify_start(update, context):
     await reply(update, context,
                 H.event_detail(ev) + "\n\n" + M.MODIFY_MENU.format(eid=ev["id"]),
                 kb([[("Date", "md:date"), ("Time", "md:time")],
-                    [("Venue", "md:venue"), ("Players", "md:players")],
+                    [("Length", "md:duration"), ("Venue", "md:venue")],
+                    [("Players", "md:players")],
                     [("Done", "md:done")]]))
     return M_MENU
 
@@ -882,6 +924,7 @@ async def modify_pick(update, context):
     prompts = {
         "date": (M.CREATE_STEP_DATE, date_buttons(), M_DATE),
         "time": (M.CREATE_STEP_TIME, time_buttons(), M_TIME),
+        "duration": (M.CREATE_STEP_DURATION, duration_buttons(), M_DURATION),
         "venue": (M.CREATE_STEP_VENUE_NONE, None, M_VENUE),
         "players": (M.CREATE_STEP_PLAYERS, player_buttons(), M_PLAYERS),
     }
@@ -958,6 +1001,23 @@ async def modify_time(update, context):
     old = H.local_dt(ev["starts_at"]).date()
     return await _apply_modify(update, context, "New time.",
                                starts_at=H.to_epoch(old, t[0], t[1]))
+
+
+async def modify_duration(update, context):
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_reply_markup(None)
+        mins = int(update.callback_query.data[3:])
+    else:
+        raw = update.effective_message.text
+        mins = H.parse_duration(raw)
+        if mins is None:
+            await reply(update, context, M.BAD_DURATION.format(raw=raw[:30]),
+                        duration_buttons(), ok=False)
+            return M_DURATION
+    return await _apply_modify(update, context,
+                               f"Now {H.fmt_duration(mins)} long.",
+                               duration_min=mins)
 
 
 async def modify_venue(update, context):
@@ -1376,6 +1436,10 @@ def main():
                 CallbackQueryHandler(create_time_btn, pattern=r"^ct:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, create_time_txt),
             ],
+            C_DURATION: [
+                CallbackQueryHandler(create_duration_btn, pattern=r"^cn:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, create_duration_txt),
+            ],
             C_VENUE: [
                 CallbackQueryHandler(create_venue_btn, pattern=r"^cv:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, create_venue_txt),
@@ -1408,6 +1472,10 @@ def main():
             M_TIME: [
                 CallbackQueryHandler(modify_time, pattern=r"^ct:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, modify_time),
+            ],
+            M_DURATION: [
+                CallbackQueryHandler(modify_duration, pattern=r"^cn:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, modify_duration),
             ],
             M_VENUE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, modify_venue)

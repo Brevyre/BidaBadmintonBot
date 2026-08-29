@@ -107,7 +107,7 @@ In a **private** chat with the bot:
 /create
 ```
 
-Walk through the four steps, confirm at the review screen, and check the
+Walk through the five steps, confirm at the review screen, and check the
 announcement appears in your group. Then tap **I'm in**, choose **+1**, and
 confirm you receive the `.ics` calendar file. Tap it — it should open your phone's
 calendar with an Add button.
@@ -261,7 +261,7 @@ with the service's variables injected, so it will not see the volume.
 | `/invite E001 \| Ann, @bob` | Invite people |
 | `/subhost E001 @handle` | Let someone else manage it |
 | `/uninvite E001 @handle` | Remove a player |
-| `/modify E001` | Edit date, time, venue or size |
+| `/modify E001` | Edit date, time, length, venue or size |
 | `/cancel E001 reason` | Call it off and notify everyone |
 
 **Admin**
@@ -287,6 +287,11 @@ waiting people are promoted in that same order, so nobody jumps ahead.
 **`/resetstats` does not delete anything.** It moves a marker so only sessions
 from that point on are counted. Your event history stays intact, which means an
 accidental reset costs you leaderboard numbers, not data.
+
+**Session length is per-session.** `/create` asks how long the court is booked
+for - 1 hour, 1.5, 2 or 3, or type anything from 30 minutes to 6 hours. This
+sets the calendar file's finish time, so a 1-hour game no longer blocks out two
+hours in everyone's diary. Change it later with `/modify` -> Length.
 
 **Bare times mean evening.** Typing `8` gets you 8:00pm, because badminton is an
 after-work game. Type `8am` or `08:00` if you mean the morning — and the review

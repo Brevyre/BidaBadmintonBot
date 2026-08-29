@@ -75,19 +75,25 @@ PINNED_NOTICE = (
 # ----------------------------------------------------------------- create ---
 
 CREATE_STEP_DATE = (
-    "\U0001F3F8 New session — step 1 of 4\nWhen? Tap a day, or type a date."
+    "\U0001F3F8 New session — step 1 of 5\nWhen? Tap a day, or type a date."
 )
 CREATE_STEP_TIME = (
-    "Step 2 of 4 — What time?\nTap one, or type it (8pm, 20:00, 7.30pm all work)."
+    "Step 2 of 5 — What time does it start?\n"
+    "Tap one, or type it (8pm, 20:00, 7.30pm all work)."
 )
-CREATE_STEP_VENUE = "Step 3 of 4 — Which venue?\nTap a recent one, or type a new name."
-CREATE_STEP_VENUE_NONE = "Step 3 of 4 — Which venue?\nType the name."
-CREATE_STEP_PLAYERS = "Step 4 of 4 — How many players?\nTap one, or type a number."
+CREATE_STEP_DURATION = (
+    "Step 3 of 5 — How long is the court booked for?\n"
+    "Tap one, or type it (90 mins, 1.5h both work)."
+)
+CREATE_STEP_VENUE = "Step 4 of 5 — Which venue?\nTap a recent one, or type a new name."
+CREATE_STEP_VENUE_NONE = "Step 4 of 5 — Which venue?\nType the name."
+CREATE_STEP_PLAYERS = "Step 5 of 5 — How many players?\nTap one, or type a number."
 
 CREATE_REVIEW = (
     "—— REVIEW ——\n"
     "Ready to go:\n"
     "\U0001F3F8 {when}\n"
+    "⏱ {duration}\n"
     "\U0001F4CD {venue}\n"
     "\U0001F465 {capacity} players\n"
     "Host: you"
@@ -108,6 +114,10 @@ BAD_DATE = (
 )
 BAD_TIME = "I couldn't read \"{raw}\" as a time. Try 8pm, 20:00 or 7.30pm."
 BAD_NUMBER = "I need a whole number between 2 and 40. \"{raw}\" won't work."
+BAD_DURATION = (
+    "I couldn't read \"{raw}\" as a length. Try 1, 2, 1.5h or 90 mins "
+    "(anything from 30 minutes to 6 hours)."
+)
 DATE_IN_PAST = "That's in the past. Give me a date from today onwards."
 
 # --------------------------------------------------------------- announce ---
