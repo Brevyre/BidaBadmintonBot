@@ -787,24 +787,128 @@ async def cmd_invite(update, context):
         return
 
     notes = []
+    invited = []
     for name in names:
-        if name.startswith("@"):
-            user = db.find_user_by_handle(name)
-            if user is None:
-                notes.append(M.INVITE_NO_DM.format(handle=name))
-                continue
-            sent = await dm(context, user["tg_id"], M.INVITE_DM.format(
-                host=db.user_label(update.effective_user.id), eid=ev["id"],
-                when=H.fmt_when(ev["starts_at"]), venue=ev["venue"],
-                taken=db.seats_taken(ev["id"]), capacity=ev["capacity"]),
-                kb([[("I'm in", f"ply:{ev['id']}")]]))
-            if not sent:
-                notes.append(M.INVITE_NO_DM.format(handle=name))
+        if not name.startswith("@"):
+            # No Telegram account means no way to send an invitation. Say so
+            # plainly and point at /add, which doesn't need them to accept.
+            notes.append(M.INVITE_NEEDS_HANDLE.format(name=name, eid=ev["id"]))
+            continue
+        user = db.find_user_by_handle(name)
+        if user is None:
+            notes.append(M.INVITE_NO_DM.format(handle=name))
+            continue
+        sent = await dm(context, user["tg_id"], M.INVITE_DM.format(
+            host=db.user_label(update.effective_user.id), eid=ev["id"],
+            when=H.fmt_when_range(ev["starts_at"], ev["duration_min"]),
+            venue=ev["venue"],
+            taken=db.seats_taken(ev["id"]), capacity=ev["capacity"]),
+            kb([[("I'm in", f"ply:{ev['id']}")]]))
+        if sent:
+            invited.append(name)
+        else:
+            notes.append(M.INVITE_NO_DM.format(handle=name))
 
-    out = M.INVITE_SENT.format(n=len(names), eid=ev["id"], names=", ".join(names))
+    if invited:
+        out = M.INVITE_SENT.format(n=len(invited), eid=ev["id"],
+                                   names=", ".join(invited))
+    else:
+        out = "No invitations sent."
     if notes:
         out += "\n" + "\n".join(notes)
     await reply(update, context, out)
+
+
+async def cmd_add(update, context):
+    """Put people straight into a session, no acceptance needed.
+
+    Two kinds of player:
+      @handle     - a Telegram user, gets a real signup row and a DM
+      a bare name - someone not on Telegram; the host vouches for them and
+                    they hold a seat via the manual_players table
+    """
+    register(update)
+    raw = update.effective_message.text.partition(" ")[2]
+    if not raw.strip():
+        await reply(update, context, M.ADD_USAGE, ok=False)
+        return
+    left, _, right = raw.partition("|")
+    ev = await resolve_event(update, context, left.split(), "add")
+    if ev is None:
+        return
+    if not H.can_manage(ev, update.effective_user.id):
+        await reply(update, context, M.ERR_NOT_HOST.format(
+            eid=ev["id"], host=db.user_label(ev["host_id"])), ok=False)
+        return
+    if ev["status"] == "cancelled":
+        await reply(update, context,
+                    M.ERR_CANCELLED_EVENT.format(eid=ev["id"]), ok=False)
+        return
+
+    names = [n.strip() for n in right.split(",") if n.strip()]
+    if not names:
+        await reply(update, context, M.ADD_USAGE, ok=False)
+        return
+
+    eid = ev["id"]
+    host_label = db.user_label(update.effective_user.id)
+    lines = []
+
+    for name in names:
+        free = ev["capacity"] - db.seats_taken(eid)
+
+        if name.startswith("@"):
+            user = db.find_user_by_handle(name)
+            if user is None:
+                lines.append(M.ADD_LINE_UNKNOWN.format(handle=name))
+                continue
+            uid = user["tg_id"]
+            if db.get_signup(eid, uid) is not None:
+                lines.append(M.ADD_LINE_ALREADY.format(
+                    who=db.user_label(user), eid=eid))
+                continue
+
+            if free > 0:
+                db.add_signup(eid, uid, 0, 0, "in")
+                sent = await dm(context, uid, M.ADD_DM.format(
+                    host=host_label, eid=eid,
+                    when=H.fmt_when_range(ev["starts_at"], ev["duration_min"]),
+                    venue=ev["venue"], taken=db.seats_taken(eid),
+                    capacity=ev["capacity"]),
+                    kb([[("Back out", f"unp:{eid}")]]))
+                if sent:
+                    await send_calendar(context, uid, ev)
+                    lines.append(M.ADD_LINE_TOLD.format(
+                        handle=db.user_label(user)))
+                else:
+                    lines.append(M.ADD_LINE_NO_DM.format(
+                        handle=db.user_label(user)))
+            else:
+                db.add_signup(eid, uid, 0, 0, "wait")
+                await dm(context, uid, M.ADD_DM_WAITLIST.format(
+                    host=host_label, eid=eid,
+                    when=H.fmt_when_range(ev["starts_at"], ev["duration_min"]),
+                    venue=ev["venue"],
+                    pos=db.waitlist_position(eid, uid) or 1))
+                lines.append(M.ADD_LINE_WAITLIST.format(
+                    who=db.user_label(user)))
+            continue
+
+        # A plain name - nobody to notify, so it only needs a seat.
+        if db.find_manual_player(eid, name) is not None:
+            lines.append(M.ADD_LINE_ALREADY.format(who=name, eid=eid))
+            continue
+        if free <= 0:
+            lines.append(M.ADD_LINE_WAITLIST.format(
+                who=name + " (couldn't add - session is full)"))
+            continue
+        db.add_manual_player(eid, name[:60], update.effective_user.id)
+        lines.append(M.ADD_LINE_MANUAL.format(name=name[:60]))
+
+    header = M.ADD_DONE.format(eid=eid, taken=db.seats_taken(eid),
+                               capacity=ev["capacity"])
+    await reply(update, context, header + "\n" + "\n".join(lines))
+    await _refresh_announcement(context, eid)
 
 
 async def cmd_subhost(update, context):
@@ -845,7 +949,28 @@ async def cmd_uninvite(update, context):
     if len(context.args) < 2:
         await reply(update, context, "Use: /uninvite E001 @handle", ok=False)
         return
-    handle = context.args[1]
+    handle = " ".join(context.args[1:]).strip()
+
+    # Someone added by name has no Telegram account, so match on the name.
+    if not handle.startswith("@"):
+        manual = db.find_manual_player(ev["id"], handle)
+        if manual is not None:
+            db.remove_manual_player(manual["id"])
+            when = H.fmt_when_range(ev["starts_at"], ev["duration_min"])
+            for puid, kind, count in db.promote_from_waitlist(ev["id"]):
+                if kind == "person":
+                    await send_calendar(context, puid, ev)
+                    await dm(context, puid, M.PROMOTED_DM.format(
+                        eid=ev["id"], when=when, venue=ev["venue"]))
+                else:
+                    await dm(context, puid, M.PROMOTED_GUESTS_DM.format(
+                        n=count, eid=ev["id"], when=when, venue=ev["venue"]))
+            await reply(update, context, M.UNINVITE_MANUAL_DONE.format(
+                name=manual["name"], eid=ev["id"],
+                taken=db.seats_taken(ev["id"]), capacity=ev["capacity"]))
+            await _refresh_announcement(context, ev["id"])
+            return
+
     user = db.find_user_by_handle(handle)
     if user is None:
         await reply(update, context, M.ERR_NO_SUCH_USER.format(handle=handle),
@@ -1366,6 +1491,7 @@ async def post_init(app):
         BotCommand("unplay", "Back out of a session"),
         BotCommand("mysessions", "What you're signed up for"),
         BotCommand("stats", "Leaderboards"),
+        BotCommand("add", "Add players straight into your session"),
         BotCommand("help", "All commands"),
     ])
 
@@ -1502,6 +1628,7 @@ def main():
         ("show", cmd_show), ("play", cmd_play), ("unplay", cmd_unplay),
         ("mysessions", cmd_mysessions), ("sessions", cmd_sessions),
         ("stats", cmd_stats), ("csv", cmd_csv), ("invite", cmd_invite),
+        ("add", cmd_add),
         ("subhost", cmd_subhost), ("uninvite", cmd_uninvite),
         ("cancel", cmd_cancel_event), ("removeevent", cmd_removeevent),
         ("clearevents", cmd_clearevents), ("resetstats", cmd_resetstats),

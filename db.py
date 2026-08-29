@@ -61,6 +61,14 @@ CREATE TABLE IF NOT EXISTS signups (
     PRIMARY KEY (event_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS manual_players (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id  TEXT NOT NULL,
+    name      TEXT NOT NULL,
+    added_by  INTEGER NOT NULL,
+    added_at  INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS subhosts (
     event_id TEXT NOT NULL,
     user_id  INTEGER NOT NULL,
@@ -236,6 +244,7 @@ def cancel_event(eid, reason):
 def remove_event(eid):
     with connect() as con:
         con.execute("DELETE FROM signups WHERE event_id = ?", (eid,))
+        con.execute("DELETE FROM manual_players WHERE event_id = ?", (eid,))
         con.execute("DELETE FROM subhosts WHERE event_id = ?", (eid,))
         con.execute("DELETE FROM events WHERE id = ?", (eid,))
 
@@ -260,6 +269,7 @@ def count_all():
 def wipe_all_events():
     with connect() as con:
         con.execute("DELETE FROM signups")
+        con.execute("DELETE FROM manual_players")
         con.execute("DELETE FROM subhosts")
         con.execute("DELETE FROM events")
 
@@ -275,13 +285,49 @@ def recent_venues(limit=3):
 # ------------------------------------------------------------------ signups --
 
 def seats_taken(eid):
+    """Telegram players and their guests, plus manually added names."""
     with connect() as con:
         row = con.execute(
             "SELECT COALESCE(SUM(1 + confirmed_guests), 0) t "
             "FROM signups WHERE event_id = ? AND status = 'in'",
             (eid,),
         ).fetchone()
-    return row["t"]
+        manual = con.execute(
+            "SELECT COUNT(*) c FROM manual_players WHERE event_id = ?", (eid,)
+        ).fetchone()["c"]
+    return row["t"] + manual
+
+
+def manual_players(eid):
+    with connect() as con:
+        return con.execute(
+            "SELECT * FROM manual_players WHERE event_id = ? ORDER BY added_at, id",
+            (eid,),
+        ).fetchall()
+
+
+def add_manual_player(eid, name, added_by):
+    with connect() as con:
+        cur = con.execute(
+            "INSERT INTO manual_players(event_id, name, added_by, added_at) "
+            "VALUES(?, ?, ?, ?)",
+            (eid, name, added_by, int(time.time())),
+        )
+        return cur.lastrowid
+
+
+def find_manual_player(eid, name):
+    with connect() as con:
+        return con.execute(
+            "SELECT * FROM manual_players WHERE event_id = ? "
+            "AND LOWER(name) = LOWER(?)",
+            (eid, name),
+        ).fetchone()
+
+
+def remove_manual_player(row_id):
+    with connect() as con:
+        con.execute("DELETE FROM manual_players WHERE id = ?", (row_id,))
 
 
 def seats_free(event_row):

@@ -258,7 +258,8 @@ with the service's variables injected, so it will not see the volume.
 
 | Command | What it does |
 |---|---|
-| `/invite E001 \| Ann, @bob` | Invite people |
+| `/add E001 \| Ann, @bob` | Put players straight in, no acceptance needed |
+| `/invite E001 \| @bob` | Ask them first - they must tap "I'm in" |
 | `/subhost E001 @handle` | Let someone else manage it |
 | `/uninvite E001 @handle` | Remove a player |
 | `/modify E001` | Edit date, time, length, venue or size |
@@ -292,6 +293,12 @@ accidental reset costs you leaderboard numbers, not data.
 for - 1 hour, 1.5, 2 or 3, or type anything from 30 minutes to 6 hours. This
 sets the calendar file's finish time, so a 1-hour game no longer blocks out two
 hours in everyone's diary. Change it later with `/modify` -> Length.
+
+**`/add` versus `/invite`.** `/add` puts people straight into the session -
+use it when you've already agreed it in person. `/invite` asks them and waits
+for them to tap "I'm in". Only `/add` accepts plain names for people who aren't
+on Telegram; they hold a real seat, show in `/show`, and you remove them with
+`/uninvite E001 Ann`.
 
 **Bare times mean evening.** Typing `8` gets you 8:00pm, because badminton is an
 after-work game. Type `8am` or `08:00` if you mean the morning — and the review

@@ -373,11 +373,17 @@ def event_detail(event_row):
         lines.insert(1, f"❌ CANCELLED — {event_row['cancel_reason']}")
 
     playing = db.confirmed_signups(eid)
-    if playing:
+    manual = db.manual_players(eid)
+    if playing or manual:
         lines.append("\nPlaying:")
-        for i, s in enumerate(playing, 1):
+        i = 0
+        for s in playing:
+            i += 1
             extra = f" (+{s['confirmed_guests']})" if s["confirmed_guests"] else ""
             lines.append(f"  {i}. {db.user_label(s['user_id'])}{extra}")
+        for mp in manual:
+            i += 1
+            lines.append(f"  {i}. {mp['name']} (added by host)")
 
     waiting = [w for w in db.waiting_signups(eid)]
     if waiting:

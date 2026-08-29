@@ -115,6 +115,36 @@ def main():
     check("user 5 is in", db.get_signup("E001", 5)["status"], "in")
     check("back to full", db.seats_taken("E001"), 8)
 
+    print("\nManually added players (/add with a plain name)")
+    db.create_event("E900", 100, start, 120, "Add Hall", 4)
+    ev9 = db.get_event("E900")
+    db.add_signup("E900", 11, 0, 0, "in")
+    check("one telegram player", db.seats_taken("E900"), 1)
+    db.add_manual_player("E900", "Ann", 100)
+    check("named player takes a seat", db.seats_taken("E900"), 2)
+    db.add_manual_player("E900", "Bob", 100)
+    check("two named players", db.seats_taken("E900"), 3)
+    check("named players listed", [m["name"] for m in db.manual_players("E900")],
+          ["Ann", "Bob"])
+    check("lookup is case-insensitive",
+          db.find_manual_player("E900", "ann")["name"], "Ann")
+    check("unknown name not found", db.find_manual_player("E900", "Zoe"), None)
+    check("they appear in the detail view",
+          "Ann (added by host)" in H.event_detail(ev9), True)
+
+    # Removing a named player must free the seat and let the waitlist move up
+    db.add_signup("E900", 12, 0, 0, "in")
+    check("event now full", db.seats_taken("E900"), 4)
+    db.add_signup("E900", 13, 0, 0, "wait")
+    db.remove_manual_player(db.find_manual_player("E900", "Ann")["id"])
+    check("seat freed", db.seats_taken("E900"), 3)
+    promoted = db.promote_from_waitlist("E900")
+    check("waitlister promoted into it", [p[:2] for p in promoted],
+          [(13, "person")])
+    check("full again", db.seats_taken("E900"), 4)
+    check("Ann is gone", db.find_manual_player("E900", "Ann"), None)
+    check("Bob remains", db.find_manual_player("E900", "Bob")["name"], "Bob")
+
     print("\nOver-capacity safety")
     check("never exceeds capacity", db.seats_taken("E001") <= ev["capacity"], True)
 

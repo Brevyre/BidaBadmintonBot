@@ -32,7 +32,8 @@ HELP = (
     "/stats - leaderboards\n"
     "/csv E001 - calendar file as CSV\n\n"
     "*If you're hosting*\n"
-    "/invite E001 | Name, @handle - invite players\n"
+    "/add E001 | Ann, @bob - put players straight in\n"
+    "/invite E001 | @bob - ask them first\n"
     "/subhost E001 @handle - add a sub-host\n"
     "/uninvite E001 @handle - remove a player\n"
     "/modify E001 - edit the session\n"
@@ -260,6 +261,41 @@ NO_SESSIONS_YOU = "You're not signed up for anything yet. /open shows what has s
 NO_SESSIONS_THEM = "{handle} isn't signed up for anything upcoming."
 
 # ------------------------------------------------------------------- misc ---
+
+ADD_USAGE = (
+    "Use: /add E001 | Ann, @bob\n"
+    "Adds them straight into the session. Use /invite instead if you'd rather "
+    "ask them first."
+)
+ADD_DONE = "✅ {eid} — {taken}/{capacity} spots taken."
+ADD_LINE_MANUAL = "  • {name} — added (not on Telegram, you're vouching)"
+ADD_LINE_TOLD = "  • {handle} — added and told"
+ADD_LINE_NO_DM = "  • {handle} — added, but couldn't DM (no /start yet)"
+ADD_LINE_UNKNOWN = "  • {handle} — I don't know them yet, so I can't add them"
+ADD_LINE_ALREADY = "  • {who} — already in {eid}"
+ADD_LINE_WAITLIST = "  • {who} — session was full, so they're on the waitlist"
+
+ADD_DM = (
+    "\U0001F3F8 {host} added you to {eid}.\n"
+    "{when} · {venue}\n"
+    "You're in — {taken}/{capacity} spots taken.\n"
+    "Can't make it?"
+)
+
+ADD_DM_WAITLIST = (
+    "\U0001F3F8 {host} tried to add you to {eid}, but it's full.\n"
+    "{when} · {venue}\n"
+    "You're on the waitlist at position {pos} — I'll DM you if a spot opens."
+)
+
+INVITE_NEEDS_HANDLE = (
+    "\"{name}\" isn't a Telegram handle, so I can't send them an invitation.\n"
+    "To put them in the session anyway, use: /add {eid} | {name}"
+)
+
+UNINVITE_MANUAL_DONE = (
+    "✅ Removed {name} from {eid}. {taken}/{capacity} spots taken now."
+)
 
 INVITE_SENT = "✅ Invited {n} to {eid}: {names}"
 INVITE_DM = (
