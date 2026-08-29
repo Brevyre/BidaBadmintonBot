@@ -1323,6 +1323,28 @@ def main():
     if any("BOT_TOKEN" in p for p in problems):
         for p in problems:
             print("CONFIG PROBLEM: " + p)
+        # Diagnostic: which of our settings actually reached the process?
+        # Names and set/unset only - never values, so this is safe in logs.
+        import os
+        print("\n--- What this container can actually see ---")
+        for key in ("BOT_TOKEN", "ADMIN_IDS", "TIMEZONE", "DB_PATH",
+                    "GROUP_CHAT_ID"):
+            raw = os.environ.get(key)
+            if raw is None:
+                state = "NOT SET"
+            elif raw.strip() == "":
+                state = "SET BUT EMPTY"
+            else:
+                state = f"set, {len(raw)} chars"
+            print(f"  {key:<15} {state}")
+        railway = sorted(k for k in os.environ if k.startswith("RAILWAY_"))
+        print(f"  Running on Railway: {'yes' if railway else 'no'}")
+        near = sorted(k for k in os.environ
+                      if any(w in k.upper() for w in ("TOKEN", "ADMIN", "BOT")))
+        if near:
+            print(f"  Similar names present: {', '.join(near)}")
+        print("  config.json present:", os.path.exists("config.json"))
+        print("--- end diagnostic ---\n")
         raise SystemExit(1)
     for p in problems:
         log.warning(p)
