@@ -1,0 +1,16 @@
+{
+  "_comment": "Local development only. On Railway, set these as environment variables instead (see DEPLOY.md). Never commit config.json - it is gitignored.",
+
+  "bot_token": "PASTE_THE_TOKEN_FROM_BOTFATHER_HERE",
+  "admin_ids": [0],
+  "group_chat_id": 0,
+  "timezone": "Asia/Singapore",
+
+  "default_duration_minutes": 120,
+  "reminder_evening_before_hour": 18,
+  "reminder_hours_before": 1,
+
+  "announce_restarts": false,
+  "offline_announce_threshold_minutes": 30,
+  "db_path": "bbbot.db"
+}

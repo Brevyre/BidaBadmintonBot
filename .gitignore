@@ -1,0 +1,13 @@
+# Never commit these
+config.json
+*.db
+*.db-journal
+
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# Generated test artefacts
+sample-*.ics
