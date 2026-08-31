@@ -536,8 +536,11 @@ async def _show_event(update, context, ev):
         if mine:
             rows.append([("Change guests", f"cg:{ev['id']}"),
                          ("Back out", f"unp:{ev['id']}")])
+        elif db.get_decline(ev["id"], uid) is not None:
+            rows.append([("Actually, I'm in", f"ply:{ev['id']}")])
         else:
-            rows.append([("Sign me up", f"ply:{ev['id']}")])
+            rows.append([("Sign me up", f"ply:{ev['id']}"),
+                         ("Can't make it", f"skp:{ev['id']}")])
         rows.append([("Calendar file", f"ics:{ev['id']}")])
     await reply(update, context, H.event_detail(ev), kb(rows) if rows else None)
 
@@ -803,7 +806,8 @@ async def _do_unplay(update, context, ev):
     eid = ev["id"]
     if db.get_signup(eid, uid) is None:
         await reply(update, context, M.ERR_NOT_IN.format(eid=eid),
-                    kb([[("Sign me up", f"ply:{eid}")]]), ok=False)
+                    kb([[("Sign me up", f"ply:{eid}"),
+                         ("Can't make it", f"skp:{eid}")]]), ok=False)
         return
 
     db.remove_signup(eid, uid)
@@ -895,7 +899,8 @@ async def cmd_invite(update, context):
             when=H.fmt_when_range(ev["starts_at"], ev["duration_min"]),
             venue=ev["venue"],
             taken=db.seats_taken(ev["id"]), capacity=ev["capacity"]),
-            kb([[("I'm in", f"ply:{ev['id']}")]]))
+            kb([[("I'm in", f"ply:{ev['id']}"),
+                 ("Can't make it", f"skp:{ev['id']}")]]))
         if sent:
             invited.append(name)
         else:
@@ -967,7 +972,7 @@ async def cmd_add(update, context):
                     when=H.fmt_when_range(ev["starts_at"], ev["duration_min"]),
                     venue=ev["venue"], taken=db.seats_taken(eid),
                     capacity=ev["capacity"]),
-                    kb([[("Back out", f"unp:{eid}")]]))
+                    kb([[("Can't make it", f"skp:{eid}")]]))
                 if sent:
                     await send_calendar(context, uid, ev)
                     lines.append(M.ADD_LINE_TOLD.format(
@@ -1525,7 +1530,8 @@ async def reminder_tick(context):
                     await to_group(context, M.REMIND_GROUP_OPEN.format(
                         eid=eid, free=free, when=H.fmt_when(start),
                         venue=ev["venue"]),
-                        kb([[("I'm in", f"ply:{eid}")]]))
+                        kb([[("I'm in", f"ply:{eid}"),
+                             ("Can't make it", f"skp:{eid}")]]))
 
         # 2) Shortly before
         key_soon = f"rem:{eid}:soon"
