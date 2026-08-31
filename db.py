@@ -69,6 +69,14 @@ CREATE TABLE IF NOT EXISTS manual_players (
     added_at  INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS declines (
+    event_id      TEXT NOT NULL,
+    user_id       INTEGER NOT NULL,
+    declined_at   INTEGER NOT NULL,
+    had_signed_up INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (event_id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS subhosts (
     event_id TEXT NOT NULL,
     user_id  INTEGER NOT NULL,
@@ -244,6 +252,7 @@ def cancel_event(eid, reason):
 def remove_event(eid):
     with connect() as con:
         con.execute("DELETE FROM signups WHERE event_id = ?", (eid,))
+        con.execute("DELETE FROM declines WHERE event_id = ?", (eid,))
         con.execute("DELETE FROM manual_players WHERE event_id = ?", (eid,))
         con.execute("DELETE FROM subhosts WHERE event_id = ?", (eid,))
         con.execute("DELETE FROM events WHERE id = ?", (eid,))
@@ -269,6 +278,7 @@ def count_all():
 def wipe_all_events():
     with connect() as con:
         con.execute("DELETE FROM signups")
+        con.execute("DELETE FROM declines")
         con.execute("DELETE FROM manual_players")
         con.execute("DELETE FROM subhosts")
         con.execute("DELETE FROM events")
@@ -445,6 +455,55 @@ def promote_from_waitlist(eid):
 
 
 # ----------------------------------------------------------------- subhosts --
+
+def add_decline(eid, user_id, had_signed_up=False):
+    """Record that someone said they are not coming."""
+    with connect() as con:
+        con.execute(
+            "INSERT INTO declines(event_id, user_id, declined_at, had_signed_up) "
+            "VALUES(?, ?, ?, ?) "
+            "ON CONFLICT(event_id, user_id) DO UPDATE SET "
+            "  declined_at = excluded.declined_at, "
+            "  had_signed_up = MAX(declines.had_signed_up, excluded.had_signed_up)",
+            (eid, user_id, int(time.time()), int(had_signed_up)),
+        )
+
+
+def remove_decline(eid, user_id):
+    """They changed their mind and signed up, so the no longer stands."""
+    with connect() as con:
+        con.execute(
+            "DELETE FROM declines WHERE event_id = ? AND user_id = ?",
+            (eid, user_id),
+        )
+
+
+def get_decline(eid, user_id):
+    with connect() as con:
+        return con.execute(
+            "SELECT * FROM declines WHERE event_id = ? AND user_id = ?",
+            (eid, user_id),
+        ).fetchone()
+
+
+def declines_for_event(eid):
+    with connect() as con:
+        return con.execute(
+            "SELECT * FROM declines WHERE event_id = ? ORDER BY declined_at",
+            (eid,),
+        ).fetchall()
+
+
+def decline_count(user_id):
+    """How many times they have said no, since the last stats reset."""
+    epoch = int(get_meta("stats_epoch", "0"))
+    with connect() as con:
+        return con.execute(
+            "SELECT COUNT(*) c FROM declines d JOIN events e ON e.id = d.event_id "
+            "WHERE d.user_id = ? AND e.starts_at >= ?",
+            (user_id, epoch),
+        ).fetchone()["c"]
+
 
 def add_subhost(eid, user_id):
     with connect() as con:

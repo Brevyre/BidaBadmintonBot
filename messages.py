@@ -27,6 +27,7 @@ HELP = (
     "/show E001 - full details\n"
     "/play E001 - sign up\n"
     "/unplay E001 - back out\n"
+    "/skip E001 - say you're not coming\n"
     "/mysessions - what you're signed up for\n"
     "/sessions @handle - someone else's sessions\n"
     "/stats - leaderboards\n"
@@ -158,6 +159,23 @@ PLAY_WAITLISTED = (
     "{when} · {venue}\n"
     "I'll DM you the moment a spot opens."
 )
+
+SENT_TO_DM_POPUP = "Sent you a private message \U0001F4EC"
+NO_DM_POPUP = (
+    "I can't message you privately yet. Tap my name, press Start, then try again."
+)
+
+SKIP_OK = (
+    "\U0001F44D Noted — you're not coming to {eid}.\n"
+    "{when} · {venue}\n"
+    "Changed your mind? /play {eid}"
+)
+SKIP_WAS_IN = (
+    "\U0001F44D Noted — you're not coming to {eid}, and I've given up your spot.\n"
+    "{when} · {venue}\n"
+    "{taken}/{capacity} spots taken now."
+)
+SKIP_ALREADY = "You'd already told me you're not coming to {eid}."
 
 UNPLAY_OK = "✅ You're out of {eid} — {taken}/{capacity} spots taken now."
 UNPLAY_PROMOTED = "{who} moves off the waitlist into your spot."

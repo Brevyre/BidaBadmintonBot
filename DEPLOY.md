@@ -247,6 +247,7 @@ with the service's variables injected, so it will not see the volume.
 | `/show E001` | Full details including who's playing |
 | `/play E001` | Sign up, then pick guests |
 | `/unplay E001` | Back out |
+| `/skip E001` | Say you are not coming (works even if never signed up) |
 | `/mysessions` | What you're signed up for |
 | `/sessions @handle` | Someone else's sessions |
 | `/stats` | Host and player leaderboards |
@@ -293,6 +294,19 @@ accidental reset costs you leaderboard numbers, not data.
 for - 1 hour, 1.5, 2 or 3, or type anything from 30 minutes to 6 hours. This
 sets the calendar file's finish time, so a 1-hour game no longer blocks out two
 hours in everyone's diary. Change it later with `/modify` -> Length.
+
+**Signing up is private.** Tapping "I'm in" on the group announcement does not
+put anything in the group chat. The person gets a small popup only they can see,
+and the confirmation plus calendar file arrive in their DM. The only thing that
+changes in the group is the spot count on the original announcement, edited in
+place.
+
+**Saying no is tracked.** `/skip E001` (or the "Can't make it" button) records
+that someone is not coming. It works whether or not they had signed up - if they
+had a seat, it is freed and the waitlist moves up. `/unplay` counts as a no too,
+since the outcome is the same. Counts show in `/stats @handle` and at the foot
+of `/stats`, and `/show E001` lists who has declined so the host knows who has
+actually responded.
 
 **`/add` versus `/invite`.** `/add` puts people straight into the session -
 use it when you've already agreed it in person. `/invite` asks them and waits

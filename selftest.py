@@ -145,6 +145,42 @@ def main():
     check("Ann is gone", db.find_manual_player("E900", "Ann"), None)
     check("Bob remains", db.find_manual_player("E900", "Bob")["name"], "Bob")
 
+    print("\nSaying no (/skip)")
+    db.create_event("E901", 100, start, 60, "No Hall", 2)
+    db.add_signup("E901", 21, 0, 0, "in")
+    db.add_signup("E901", 22, 0, 0, "in")
+    check("full", db.seats_taken("E901"), 2)
+
+    # Someone who never signed up can still say no
+    db.add_decline("E901", 31, had_signed_up=False)
+    check("decline recorded", db.get_decline("E901", 31) is not None, True)
+    check("declining takes no seat", db.seats_taken("E901"), 2)
+    check("counted for that person", db.decline_count(31), 1)
+
+    # Someone holding a seat says no: seat is freed and the no is recorded
+    db.add_signup("E901", 23, 0, 0, "wait")
+    db.add_decline("E901", 21, had_signed_up=True)
+    db.remove_signup("E901", 21)
+    check("seat freed", db.seats_taken("E901"), 1)
+    check("flagged as had signed up",
+          db.get_decline("E901", 21)["had_signed_up"], 1)
+    promoted = db.promote_from_waitlist("E901")
+    check("waitlister took the spot", [p[:2] for p in promoted], [(23, "person")])
+
+    check("two declines on the event", len(db.declines_for_event("E901")), 2)
+    check("shown in the detail view",
+          "Not coming (2)" in H.event_detail(db.get_event("E901")), True)
+
+    # Changing their mind clears the no
+    db.remove_decline("E901", 31)
+    check("no is withdrawn", db.get_decline("E901", 31), None)
+    check("count drops", db.decline_count(31), 0)
+
+    # Declining twice must not double-count
+    db.add_decline("E901", 31)
+    db.add_decline("E901", 31)
+    check("no double counting", db.decline_count(31), 1)
+
     print("\nOver-capacity safety")
     check("never exceeds capacity", db.seats_taken("E001") <= ev["capacity"], True)
 

@@ -400,4 +400,9 @@ def event_detail(event_row):
                 )
             pos += 1
 
+    declined = db.declines_for_event(eid)
+    if declined:
+        names = ", ".join(db.user_label(d["user_id"]) for d in declined)
+        lines.append(f"\nNot coming ({len(declined)}): {names}")
+
     return "\n".join(lines)

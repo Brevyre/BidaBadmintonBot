@@ -71,6 +71,36 @@ def dm_button(context, label="Open a chat with me"):
     )
 
 
+def from_group(update):
+    chat = update.effective_chat
+    return chat is not None and chat.type != ChatType.PRIVATE
+
+
+async def reply_private(update, context, text, markup=None, ok=True):
+    """Answer the person, never the group.
+
+    In a private chat this is an ordinary reply. In a group the answer goes to
+    their DM instead and they get a small popup only they can see, so signing
+    up doesn't spam everyone.
+    """
+    if not from_group(update):
+        return await reply(update, context, text, markup, ok=ok)
+
+    uid = update.effective_user.id
+    sent = await dm(context, uid, text, markup)
+    q = update.callback_query
+    if q is not None:
+        try:
+            await q.answer(M.SENT_TO_DM_POPUP if sent else M.NO_DM_POPUP,
+                           show_alert=not sent)
+        except BadRequest:
+            pass
+    elif not sent:
+        # A typed command in the group, and we cannot reach them privately.
+        await reply(update, context, M.ERR_NO_DM, dm_button(context), ok=False)
+    return sent
+
+
 async def reply(update, context, text, markup=None, ok=True):
     """Reply, prefixing the offline apology if this message arrived while down."""
     prefix = ""
@@ -434,7 +464,8 @@ async def create_confirm(update, context):
             venue=ev["venue"],
             capacity=ev["capacity"], host=db.user_label(update.effective_user.id),
         ),
-        kb([[("I'm in", f"ply:{eid}"), ("Details", f"shw:{eid}")]]),
+        kb([[("I'm in", f"ply:{eid}"), ("Can't make it", f"skp:{eid}")],
+            [("Details", f"shw:{eid}")]]),
     )
     if sent:
         db.set_announce_message(eid, sent.chat_id, sent.message_id)
@@ -557,10 +588,12 @@ async def cmd_stats(update, context):
                         M.ERR_NO_SUCH_USER.format(handle=handle), ok=False)
             return
         hosted, played = db.stats_for(user["tg_id"])
+        nos = db.decline_count(user["tg_id"])
         await reply(update, context,
                     f"\U0001F4CA {db.user_label(user)}\n"
                     f"Sessions hosted: {hosted}\n"
-                    f"Sessions played: {played}")
+                    f"Sessions played: {played}\n"
+                    f"Said no: {nos}")
         return
 
     hosts = db.host_leaderboard()
@@ -581,6 +614,10 @@ async def cmd_stats(update, context):
         for i, r in enumerate(players):
             m = medals[i] if i < 3 else f"{i + 1}."
             out.append(f"{m} {db.user_label(r['user_id'])} — {r['n']}")
+    me = update.effective_user.id
+    hosted, played = db.stats_for(me)
+    out.append(f"\nYou: {played} played, {hosted} hosted, "
+               f"{db.decline_count(me)} said no")
     await reply(update, context, "\n".join(out))
 
 
@@ -609,11 +646,11 @@ async def _begin_play(update, context, ev):
     eid = ev["id"]
 
     if ev["status"] == "cancelled":
-        await reply(update, context, M.ERR_CANCELLED_EVENT.format(eid=eid),
+        await reply_private(update, context, M.ERR_CANCELLED_EVENT.format(eid=eid),
                     kb([[("See all events", "ev:all")]]), ok=False)
         return
     if ev["starts_at"] <= time.time():
-        await reply(update, context,
+        await reply_private(update, context,
                     M.ERR_PASSED.format(eid=eid,
                                         when=H.fmt_date_only(ev["starts_at"])),
                     kb([[("See what's coming up", "ev:all")]]), ok=False)
@@ -644,7 +681,7 @@ async def _begin_play(update, context, ev):
     await reply(
         update, context,
         M.PLAY_ASK_GUESTS.format(
-            eid=eid, when=H.fmt_when(ev["starts_at"]), venue=ev["venue"],
+            eid=eid, when=H.fmt_when_range(ev["starts_at"], ev["duration_min"]), venue=ev["venue"],
             taken=taken, capacity=ev["capacity"]),
         kb([[("Just me", f"pg:{eid}:0"), ("+1", f"pg:{eid}:1"),
              ("+2", f"pg:{eid}:2")]]),
@@ -663,11 +700,18 @@ async def cb_play_guests(update, context):
     if ev is None or ev["status"] != "live":
         await q.answer("That session is gone.", show_alert=True)
         return
-    await q.answer()
-    try:
-        await q.edit_message_reply_markup(None)
-    except BadRequest:
-        pass
+
+    # Only strip the buttons when they are this person's own guest prompt.
+    # The group announcement's buttons must stay for everyone else.
+    if not from_group(update):
+        await q.answer()
+        try:
+            await q.edit_message_reply_markup(None)
+        except BadRequest:
+            pass
+
+    when = H.fmt_when_range(ev["starts_at"], ev["duration_min"])
+    db.remove_decline(eid, uid)  # signing up cancels any earlier "not coming"
 
     taken = db.seats_taken(eid)
     free = ev["capacity"] - taken
@@ -675,8 +719,8 @@ async def cb_play_guests(update, context):
     if free <= 0:
         db.add_signup(eid, uid, 0, guests, "wait")
         pos = db.waitlist_position(eid, uid)
-        await q.message.reply_text(M.PLAY_WAITLISTED.format(
-            eid=eid, pos=pos, when=H.fmt_when(ev["starts_at"]), venue=ev["venue"]))
+        await reply_private(update, context, M.PLAY_WAITLISTED.format(
+            eid=eid, pos=pos, when=when, venue=ev["venue"]))
         return
 
     seats_for_guests = min(guests, free - 1)
@@ -684,7 +728,6 @@ async def cb_play_guests(update, context):
     db.add_signup(eid, uid, seats_for_guests, waiting, "in")
 
     new_taken = db.seats_taken(eid)
-    await send_calendar(context, uid, ev, seats_for_guests)
 
     if waiting > 0:
         text = M.PLAY_PARTIAL.format(
@@ -694,10 +737,56 @@ async def cb_play_guests(update, context):
         full = "\nSession is now full." if new_taken >= ev["capacity"] else ""
         text = M.PLAY_OK.format(
             guest_bit=H.guest_bit(seats_for_guests), eid=eid,
-            when=H.fmt_when(ev["starts_at"]), venue=ev["venue"],
+            when=when, venue=ev["venue"],
             taken=new_taken, capacity=ev["capacity"], full_bit=full)
 
-    await q.message.reply_text(text)
+    reached = await reply_private(update, context, text)
+    if reached:
+        await send_calendar(context, uid, ev, seats_for_guests)
+    await _refresh_announcement(context, eid)
+
+
+async def cmd_skip(update, context):
+    register(update)
+    ev = await resolve_event(update, context, context.args, "skip")
+    if ev is None:
+        return
+    await _do_skip(update, context, ev)
+
+
+async def _do_skip(update, context, ev):
+    """Say you're not coming. Works whether or not you had signed up."""
+    uid = update.effective_user.id
+    eid = ev["id"]
+    when = H.fmt_when_range(ev["starts_at"], ev["duration_min"])
+
+    signup = db.get_signup(eid, uid)
+    if signup is None and db.get_decline(eid, uid) is not None:
+        await reply_private(update, context, M.SKIP_ALREADY.format(eid=eid),
+                            kb([[("Actually, I'm in", f"ply:{eid}")]]))
+        return
+
+    db.add_decline(eid, uid, had_signed_up=signup is not None)
+
+    if signup is None:
+        await reply_private(update, context, M.SKIP_OK.format(
+            eid=eid, when=when, venue=ev["venue"]))
+        return
+
+    # They were holding a seat, so free it and move the waitlist up.
+    db.remove_signup(eid, uid)
+    for puid, kind, count in db.promote_from_waitlist(eid):
+        if kind == "person":
+            await send_calendar(context, puid, ev)
+            await dm(context, puid, M.PROMOTED_DM.format(
+                eid=eid, when=when, venue=ev["venue"]))
+        else:
+            await dm(context, puid, M.PROMOTED_GUESTS_DM.format(
+                n=count, eid=eid, when=when, venue=ev["venue"]))
+
+    await reply_private(update, context, M.SKIP_WAS_IN.format(
+        eid=eid, when=when, venue=ev["venue"],
+        taken=db.seats_taken(eid), capacity=ev["capacity"]))
     await _refresh_announcement(context, eid)
 
 
@@ -718,6 +807,7 @@ async def _do_unplay(update, context, ev):
         return
 
     db.remove_signup(eid, uid)
+    db.add_decline(eid, uid, had_signed_up=True)
     promoted = db.promote_from_waitlist(eid)
     taken = db.seats_taken(eid)
 
@@ -736,7 +826,7 @@ async def _do_unplay(update, context, ev):
                 n=count, eid=eid, when=H.fmt_when(ev["starts_at"]),
                 venue=ev["venue"]))
 
-    await reply(update, context, "\n".join(lines))
+    await reply_private(update, context, "\n".join(lines))
     await _refresh_announcement(context, eid)
 
 
@@ -755,7 +845,9 @@ async def _refresh_announcement(context, eid):
     try:
         await context.bot.edit_message_text(
             chat_id=ev["announce_chat"], message_id=ev["announce_msg"], text=text,
-            reply_markup=kb([[("I'm in", f"ply:{eid}"), ("Details", f"shw:{eid}")]]),
+            reply_markup=kb([[("I'm in", f"ply:{eid}"),
+                              ("Can't make it", f"skp:{eid}")],
+                             [("Details", f"shw:{eid}")]]),
         )
     except BadRequest:
         pass
@@ -1347,10 +1439,11 @@ async def cb_router(update, context):
     kind, _, eid = data.partition(":")
 
     if kind == "ply":
-        await q.answer()
         ev = db.get_event(eid)
         if ev is None:
+            await q.answer()
             return await q.message.reply_text(M.ERR_NO_EVENT.format(eid=eid))
+        # No q.answer() here - reply_private answers with the right popup.
         return await _begin_play(update, context, ev)
 
     if kind == "cg":
@@ -1359,12 +1452,20 @@ async def cb_router(update, context):
         if ev is None:
             return await q.message.reply_text(M.ERR_NO_EVENT.format(eid=eid))
         taken = db.seats_taken(eid)
-        return await q.message.reply_text(
+        return await reply_private(update, context,
             M.PLAY_ASK_GUESTS.format(
-                eid=eid, when=H.fmt_when(ev["starts_at"]), venue=ev["venue"],
-                taken=taken, capacity=ev["capacity"]),
-            reply_markup=kb([[("Just me", f"pg:{eid}:0"), ("+1", f"pg:{eid}:1"),
-                              ("+2", f"pg:{eid}:2")]]))
+                eid=eid,
+                when=H.fmt_when_range(ev["starts_at"], ev["duration_min"]),
+                venue=ev["venue"], taken=taken, capacity=ev["capacity"]),
+            kb([[("Just me", f"pg:{eid}:0"), ("+1", f"pg:{eid}:1"),
+                 ("+2", f"pg:{eid}:2")]]))
+
+    if kind == "skp":
+        ev = db.get_event(eid)
+        if ev is None:
+            await q.answer()
+            return await q.message.reply_text(M.ERR_NO_EVENT.format(eid=eid))
+        return await _do_skip(update, context, ev)
 
     if kind == "unp":
         await q.answer()
@@ -1418,7 +1519,7 @@ async def reminder_tick(context):
                     await dm(context, s["user_id"], M.REMIND_DAY_BEFORE.format(
                         eid=eid, when=H.fmt_when(start), venue=ev["venue"],
                         guest_bit=H.guest_bit(s["confirmed_guests"])),
-                        kb([[("Back out", f"unp:{eid}")]]))
+                        kb([[("Can't make it", f"skp:{eid}")]]))
                 free = db.seats_free(ev)
                 if free > 0:
                     await to_group(context, M.REMIND_GROUP_OPEN.format(
@@ -1489,6 +1590,7 @@ async def post_init(app):
         BotCommand("show", "Show a session's details"),
         BotCommand("play", "Sign up for a session"),
         BotCommand("unplay", "Back out of a session"),
+        BotCommand("skip", "Say you are not coming"),
         BotCommand("mysessions", "What you're signed up for"),
         BotCommand("stats", "Leaderboards"),
         BotCommand("add", "Add players straight into your session"),
@@ -1628,7 +1730,7 @@ def main():
         ("show", cmd_show), ("play", cmd_play), ("unplay", cmd_unplay),
         ("mysessions", cmd_mysessions), ("sessions", cmd_sessions),
         ("stats", cmd_stats), ("csv", cmd_csv), ("invite", cmd_invite),
-        ("add", cmd_add),
+        ("add", cmd_add), ("skip", cmd_skip),
         ("subhost", cmd_subhost), ("uninvite", cmd_uninvite),
         ("cancel", cmd_cancel_event), ("removeevent", cmd_removeevent),
         ("clearevents", cmd_clearevents), ("resetstats", cmd_resetstats),
