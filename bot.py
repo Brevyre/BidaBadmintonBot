@@ -129,7 +129,7 @@ async def dm(context, user_id, text, markup=None, document=None, caption=None):
         return True
     except (Forbidden, BadRequest) as exc:
         log.info("Could not DM %s: %s", user_id, exc)
-        db.upsert_user(user_id, None, None, dm_ok=0)
+        db.set_dm_ok(user_id, False)
         return False
 
 

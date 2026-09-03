@@ -145,6 +145,22 @@ def main():
     check("Ann is gone", db.find_manual_player("E900", "Ann"), None)
     check("Bob remains", db.find_manual_player("E900", "Bob")["name"], "Bob")
 
+    print("\nNames survive a failed DM (the 'someone' bug)")
+    db.upsert_user(555, "jason", "Jason")
+    check("name recorded", db.user_label(555), "@jason")
+    db.set_dm_ok(555, False)
+    check("failed DM keeps the name", db.user_label(555), "@jason")
+    check("but the flag is cleared", db.get_user(555)["dm_ok"], 0)
+    db.upsert_user(555, None, None, dm_ok=0)
+    check("partial update keeps the name too", db.user_label(555), "@jason")
+    db.upsert_user(555, "jasonlim", "Jason")
+    check("a real change still applies", db.user_label(555), "@jasonlim")
+
+    db.set_dm_ok(777, False)
+    check("unknown user gets a distinct label", db.user_label(777), "player 777")
+    check("two unnamed people differ",
+          db.user_label(777) != db.user_label(888), True)
+
     print("\nSaying no (/skip)")
     db.create_event("E901", 100, start, 60, "No Hall", 2)
     db.add_signup("E901", 21, 0, 0, "in")

@@ -134,6 +134,13 @@ def set_meta(key, value):
 # -------------------------------------------------------------------- users --
 
 def upsert_user(tg_id, username, first_name, dm_ok=None):
+    """Record or refresh a user.
+
+    Passing None for a name means "I don't know it right now", NOT "erase it".
+    COALESCE keeps whatever we already had, so a failed DM or a callback with
+    partial data can never wipe someone's identity and turn them into
+    "someone" in the player lists.
+    """
     now = int(time.time())
     with connect() as con:
         existing = con.execute(
@@ -144,8 +151,8 @@ def upsert_user(tg_id, username, first_name, dm_ok=None):
             "INSERT INTO users(tg_id, username, first_name, dm_ok, created_at) "
             "VALUES(?, ?, ?, ?, ?) "
             "ON CONFLICT(tg_id) DO UPDATE SET "
-            "  username = excluded.username, "
-            "  first_name = excluded.first_name, "
+            "  username = COALESCE(excluded.username, users.username), "
+            "  first_name = COALESCE(excluded.first_name, users.first_name), "
             "  dm_ok = excluded.dm_ok",
             (
                 tg_id,
@@ -156,6 +163,17 @@ def upsert_user(tg_id, username, first_name, dm_ok=None):
             ),
         )
     return existing is not None
+
+
+def set_dm_ok(tg_id, ok):
+    """Flip only the can-I-DM-them flag, touching nothing else."""
+    with connect() as con:
+        con.execute(
+            "INSERT INTO users(tg_id, username, first_name, dm_ok, created_at) "
+            "VALUES(?, NULL, NULL, ?, ?) "
+            "ON CONFLICT(tg_id) DO UPDATE SET dm_ok = excluded.dm_ok",
+            (tg_id, int(ok), int(time.time())),
+        )
 
 
 def get_user(tg_id):
@@ -174,13 +192,23 @@ def find_user_by_handle(handle):
 
 
 def user_label(row_or_id):
-    """Human-friendly name for a user row or id."""
-    row = row_or_id if not isinstance(row_or_id, int) else get_user(row_or_id)
-    if row is None:
-        return "someone"
+    """Human-friendly name for a user row or id.
+
+    If we have no name, fall back to something that still distinguishes one
+    person from another - two unnamed players reading the same is worse than
+    an ugly label.
+    """
+    if isinstance(row_or_id, int):
+        row = get_user(row_or_id)
+        if row is None:
+            return f"player {row_or_id}"
+    else:
+        row = row_or_id
+        if row is None:
+            return "someone"
     if row["username"]:
         return "@" + row["username"]
-    return row["first_name"] or "someone"
+    return row["first_name"] or f"player {row['tg_id']}"
 
 
 # ------------------------------------------------------------------- events --
