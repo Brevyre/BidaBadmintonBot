@@ -1536,6 +1536,22 @@ async def reminder_tick(context):
         eid = ev["id"]
         start = ev["starts_at"]
 
+        # 0) Safety net: never leave a seat empty while somebody is queued.
+        # Every other promotion is triggered by an action, so any seat that
+        # frees up outside those paths would otherwise sit empty indefinitely.
+        if db.seats_free(ev) > 0 and db.waiting_signups(eid):
+            when_str = H.fmt_when_range(start, ev["duration_min"])
+            for puid, kind, count in db.promote_from_waitlist(eid):
+                log.info("Reconciled %s: promoted %s (%s)", eid, puid, kind)
+                if kind == "person":
+                    await send_calendar(context, puid, ev)
+                    await dm(context, puid, M.PROMOTED_DM.format(
+                        eid=eid, when=when_str, venue=ev["venue"]))
+                else:
+                    await dm(context, puid, M.PROMOTED_GUESTS_DM.format(
+                        n=count, eid=eid, when=when_str, venue=ev["venue"]))
+            await _refresh_announcement(context, eid)
+
         # 1) Evening before
         key_day = f"rem:{eid}:day"
         if not db.get_meta(key_day):

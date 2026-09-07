@@ -199,6 +199,32 @@ def main():
     db.add_signup("E009", 502, 0, 0, "in")
     check("newcomer waitlisted", edit_guests("E009", 503, 0, 2), "wait")
 
+    print("\nNo empty seat while someone is queued")
+    db.create_event("E010", 100, start, 60, "Reconcile Hall", 4)
+    for i in range(601, 605):
+        db.add_signup("E010", i, 0, 0, "in")
+    db.add_signup("E010", 611, 0, 0, "wait")
+    check("full with one queued", db.seats_taken("E010"), 4)
+
+    # A seat frees up without any promotion running (the stuck state)
+    db.remove_signup("E010", 604)
+    check("a seat is empty", db.seats_free(db.get_event("E010")), 1)
+    check("but someone is still queued",
+          db.get_signup("E010", 611)["status"], "wait")
+
+    # The periodic reconcile condition, then the repair
+    ev10 = db.get_event("E010")
+    check("reconcile would fire",
+          db.seats_free(ev10) > 0 and len(db.waiting_signups("E010")) > 0, True)
+    db.promote_from_waitlist("E010")
+    check("queued person is now in",
+          db.get_signup("E010", 611)["status"], "in")
+    check("no empty seat left", db.seats_free(db.get_event("E010")), 0)
+
+    # And it must be a no-op when there is nothing to do
+    check("nothing to promote when full",
+          db.promote_from_waitlist("E010"), [])
+
     print("\nNames survive a failed DM (the 'someone' bug)")
     db.upsert_user(555, "jason", "Jason")
     check("name recorded", db.user_label(555), "@jason")
