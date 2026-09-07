@@ -147,6 +147,13 @@ PLAY_OK = (
     "Calendar file attached \U0001F447"
 )
 
+PLAY_UPDATED = (
+    "✅ Updated — you're in{guest_bit}.\n"
+    "{eid} · {when} · {venue}\n"
+    "{taken}/{capacity} spots taken\n"
+    "Replacement calendar file attached \U0001F447"
+)
+
 PLAY_PARTIAL = (
     "✅ You're in — but only {seats} spot{plural} was left, so your {waiting} "
     "guests are on the waitlist. They'll move up automatically if anyone drops out.\n"

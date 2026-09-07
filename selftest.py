@@ -145,6 +145,60 @@ def main():
     check("Ann is gone", db.find_manual_player("E900", "Ann"), None)
     check("Bob remains", db.find_manual_player("E900", "Bob")["name"], "Bob")
 
+    print("\nEditing your own booking (the E007 bug)")
+
+    def edit_guests(eid, uid, guests, capacity):
+        """Mirror of cb_play_guests' seat maths, so the rule is pinned here."""
+        ex = db.get_signup(eid, uid)
+        editing = ex is not None and ex["status"] == "in"
+        mine_now = (1 + ex["confirmed_guests"]) if editing else 0
+        free = capacity - (db.seats_taken(eid) - mine_now)
+        if free <= 0:
+            db.add_signup(eid, uid, 0, guests, "wait")
+            return "wait"
+        sfg = min(guests, free - 1)
+        db.add_signup(eid, uid, sfg, guests - sfg, "in")
+        db.promote_from_waitlist(eid)
+        return "in"
+
+    # A full session, and I already hold one of the seats
+    db.create_event("E007", 100, start, 60, "Edit Hall", 8)
+    db.add_signup("E007", 100, 0, 0, "in")
+    for i in range(201, 208):
+        db.add_signup("E007", i, 0, 0, "in")
+    check("session is full", db.seats_taken("E007"), 8)
+
+    check("editing keeps me confirmed", edit_guests("E007", 100, 1, 8), "in")
+    me = db.get_signup("E007", 100)
+    check("I am still 'in'", me["status"], "in")
+    check("guest that doesn't fit waits", me["waiting_guests"], 1)
+    check("my seat was never given away", me["confirmed_guests"], 0)
+    check("still exactly full", db.seats_taken("E007"), 8)
+
+    # Room to grow: 5 others, me, capacity 8 -> +2 must fit entirely
+    db.create_event("E008", 100, start, 60, "Edit Hall", 8)
+    db.add_signup("E008", 100, 0, 0, "in")
+    for i in range(301, 306):
+        db.add_signup("E008", i, 0, 0, "in")
+    check("6 of 8 taken", db.seats_taken("E008"), 6)
+    edit_guests("E008", 100, 2, 8)
+    check("both guests fit", db.get_signup("E008", 100)["confirmed_guests"], 2)
+    check("none left waiting", db.get_signup("E008", 100)["waiting_guests"], 0)
+    check("now full", db.seats_taken("E008"), 8)
+
+    # Reducing guests must free seats and pull the waitlist up
+    db.add_signup("E008", 401, 0, 0, "wait")
+    edit_guests("E008", 100, 0, 8)
+    check("back to just me", db.get_signup("E008", 100)["confirmed_guests"], 0)
+    check("waitlister promoted", db.get_signup("E008", 401)["status"], "in")
+    check("seats still add up", db.seats_taken("E008"), 7)
+
+    # Someone with no seat on a full session still goes to the waitlist
+    db.create_event("E009", 100, start, 60, "Edit Hall", 2)
+    db.add_signup("E009", 501, 0, 0, "in")
+    db.add_signup("E009", 502, 0, 0, "in")
+    check("newcomer waitlisted", edit_guests("E009", 503, 0, 2), "wait")
+
     print("\nNames survive a failed DM (the 'someone' bug)")
     db.upsert_user(555, "jason", "Jason")
     check("name recorded", db.user_label(555), "@jason")

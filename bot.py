@@ -716,10 +716,19 @@ async def cb_play_guests(update, context):
     when = H.fmt_when_range(ev["starts_at"], ev["duration_min"])
     db.remove_decline(eid, uid)  # signing up cancels any earlier "not coming"
 
-    taken = db.seats_taken(eid)
-    free = ev["capacity"] - taken
+    # Seats this person already holds must not count against them, or editing
+    # a booking makes them compete with themselves - and on a full session
+    # that would push a confirmed player onto their own waitlist.
+    existing = db.get_signup(eid, uid)
+    editing = existing is not None and existing["status"] == "in"
+    mine_now = (1 + existing["confirmed_guests"]) if editing else 0
+
+    taken_by_others = db.seats_taken(eid) - mine_now
+    free = ev["capacity"] - taken_by_others
 
     if free <= 0:
+        # Only reachable for someone who holds no seat yet: an existing player
+        # always has at least their own seat available to keep.
         db.add_signup(eid, uid, 0, guests, "wait")
         pos = db.waitlist_position(eid, uid)
         await reply_private(update, context, M.PLAY_WAITLISTED.format(
@@ -730,12 +739,27 @@ async def cb_play_guests(update, context):
     waiting = guests - seats_for_guests
     db.add_signup(eid, uid, seats_for_guests, waiting, "in")
 
+    # Dropping guests frees seats, so let the queue move up straight away.
+    for puid, kind, count in db.promote_from_waitlist(eid):
+        if kind == "person":
+            await send_calendar(context, puid, ev)
+            await dm(context, puid, M.PROMOTED_DM.format(
+                eid=eid, when=when, venue=ev["venue"]))
+        else:
+            await dm(context, puid, M.PROMOTED_GUESTS_DM.format(
+                n=count, eid=eid, when=when, venue=ev["venue"]))
+
     new_taken = db.seats_taken(eid)
 
     if waiting > 0:
         text = M.PLAY_PARTIAL.format(
             seats=free, plural="" if free == 1 else "s", waiting=waiting,
             eid=eid, taken=new_taken, capacity=ev["capacity"])
+    elif editing:
+        text = M.PLAY_UPDATED.format(
+            guest_bit=H.guest_bit(seats_for_guests) or ", just you",
+            eid=eid, when=when, venue=ev["venue"],
+            taken=new_taken, capacity=ev["capacity"])
     else:
         full = "\nSession is now full." if new_taken >= ev["capacity"] else ""
         text = M.PLAY_OK.format(
