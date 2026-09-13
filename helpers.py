@@ -73,6 +73,40 @@ def fmt_when_range(epoch, minutes):
     return f"{fmt_when(epoch)}-{fmt_time(end)}"
 
 
+def fmt_courts(courts):
+    """Turn whatever the host typed into a tidy label.
+
+    '3'        -> 'Court 3'
+    '3, 4'     -> 'Courts 3, 4'
+    '3 and 4'  -> 'Courts 3 and 4'
+    '7-8'      -> 'Courts 7-8'
+    'Court 5'  -> 'Court 5'        (already labelled, left alone)
+    None / ''  -> 'courts TBC'
+    """
+    s = (courts or "").strip()
+    if not s or s.upper() == "TBC":
+        return "courts TBC"
+    if "court" in s.lower():
+        return s
+    numbers = re.findall(r"\d+", s)
+    if len(numbers) == 1 and re.fullmatch(r"\d+", s):
+        return f"Court {s}"
+    return f"Courts {s}" if numbers else s
+
+
+def venue_courts(event_row):
+    """'Choa Chu Kang SC · Courts 3, 4' - for reminders and DMs."""
+    return f"{event_row['venue']} · {fmt_courts(event_row['courts'])}"
+
+
+def clean_courts(text):
+    """Normalise typed court input. Returns None when it is not usable."""
+    s = re.sub(r"\s+", " ", (text or "").strip())
+    if not s or len(s) > 40:
+        return None
+    return s
+
+
 def parse_duration(text):
     """Accepts 1 / 2 / 1.5 / 1.5h / 90 / 90 mins / 1h30. Returns minutes.
 
@@ -273,10 +307,15 @@ def build_ics(event_row, guests=0):
     elif guests > 1:
         guest_note = f" You are bringing {guests} guests."
 
+    courts = fmt_courts(event_row["courts"])
     desc = (
-        f"Badminton session {event_row['id']}. "
-        f"{event_row['capacity']} players.{guest_note}"
+        f"Badminton session {event_row['id']} at {event_row['venue']}, "
+        f"{courts}. {event_row['capacity']} players.{guest_note}"
     )
+    # Courts go in the location line so they show on the calendar entry itself
+    location = event_row["venue"]
+    if event_row["courts"]:
+        location = f"{location} ({courts})"
 
     lines = [
         "BEGIN:VCALENDAR",
@@ -290,7 +329,7 @@ def build_ics(event_row, guests=0):
         f"DTSTART:{start:%Y%m%dT%H%M%S}Z",
         f"DTEND:{end:%Y%m%dT%H%M%S}Z",
         _fold(f"SUMMARY:Badminton {_ics_escape(event_row['id'])}"),
-        _fold(f"LOCATION:{_ics_escape(event_row['venue'])}"),
+        _fold(f"LOCATION:{_ics_escape(location)}"),
         _fold(f"DESCRIPTION:{_ics_escape(desc)}"),
         "STATUS:CONFIRMED",
         # No VALARM on purpose: the bot sends its own reminder DMs, and a
@@ -352,7 +391,8 @@ def event_line(event_row):
     tag = "FULL" if free <= 0 else f"{free} free"
     return (
         f"{event_row['id']} · {fmt_when(event_row['starts_at'])}\n"
-        f"   {event_row['venue']} · {taken}/{event_row['capacity']} · {tag}"
+        f"   {event_row['venue']} · {fmt_courts(event_row['courts'])} · "
+        f"{taken}/{event_row['capacity']} · {tag}"
     )
 
 
@@ -364,7 +404,7 @@ def event_detail(event_row):
     lines = [
         f"\U0001F3F8 {eid} — "
         f"{fmt_when_range(event_row['starts_at'], event_row['duration_min'])}",
-        f"\U0001F4CD {event_row['venue']}",
+        f"\U0001F4CD {event_row['venue']} · {fmt_courts(event_row['courts'])}",
         f"\U0001F465 {taken}/{event_row['capacity']} spots taken",
         f"Host: {host}",
     ]

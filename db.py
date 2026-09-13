@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS events (
     cancel_reason TEXT,
     created_at    INTEGER NOT NULL,
     announce_chat INTEGER,
-    announce_msg  INTEGER
+    announce_msg  INTEGER,
+    courts        TEXT
 );
 
 CREATE TABLE IF NOT EXISTS signups (
@@ -108,10 +109,20 @@ def connect():
 def init_db():
     with connect() as con:
         con.executescript(SCHEMA)
+        _migrate(con)
         if get_meta("event_counter") is None:
             set_meta("event_counter", "0")
         if get_meta("stats_epoch") is None:
             set_meta("stats_epoch", "0")
+
+
+def _migrate(con):
+    """Add columns that newer versions need. CREATE TABLE IF NOT EXISTS does
+    nothing for an existing table, so each addition is checked and applied
+    individually. Safe to run on every start; existing rows keep NULL."""
+    cols = {r["name"] for r in con.execute("PRAGMA table_info(events)")}
+    if "courts" not in cols:
+        con.execute("ALTER TABLE events ADD COLUMN courts TEXT")
 
 
 # --------------------------------------------------------------------- meta --
@@ -219,13 +230,15 @@ def next_event_id():
     return "E%03d" % n
 
 
-def create_event(eid, host_id, starts_at, duration_min, venue, capacity):
+def create_event(eid, host_id, starts_at, duration_min, venue, capacity,
+                 courts=None):
     now = int(time.time())
     with connect() as con:
         con.execute(
             "INSERT INTO events(id, host_id, starts_at, duration_min, venue, "
-            "capacity, status, created_at) VALUES(?, ?, ?, ?, ?, ?, 'live', ?)",
-            (eid, host_id, starts_at, duration_min, venue, capacity, now),
+            "capacity, status, created_at, courts) "
+            "VALUES(?, ?, ?, ?, ?, ?, 'live', ?, ?)",
+            (eid, host_id, starts_at, duration_min, venue, capacity, now, courts),
         )
         con.execute(
             "INSERT INTO venues(name, last_used) VALUES(?, ?) "
@@ -250,7 +263,7 @@ def set_announce_message(eid, chat_id, msg_id):
 
 
 def update_event(eid, **fields):
-    allowed = {"starts_at", "venue", "capacity", "duration_min"}
+    allowed = {"starts_at", "venue", "capacity", "duration_min", "courts"}
     sets, vals = [], []
     for k, v in fields.items():
         if k in allowed:

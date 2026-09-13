@@ -77,19 +77,24 @@ PINNED_NOTICE = (
 # ----------------------------------------------------------------- create ---
 
 CREATE_STEP_DATE = (
-    "\U0001F3F8 New session — step 1 of 5\nWhen? Tap a day, or type a date."
+    "\U0001F3F8 New session — step 1 of 6\nWhen? Tap a day, or type a date."
 )
 CREATE_STEP_TIME = (
-    "Step 2 of 5 — What time does it start?\n"
+    "Step 2 of 6 — What time does it start?\n"
     "Tap one, or type it (8pm, 20:00, 7.30pm all work)."
 )
 CREATE_STEP_DURATION = (
-    "Step 3 of 5 — How long is the court booked for?\n"
+    "Step 3 of 6 — How long is the court booked for?\n"
     "Tap one, or type it (90 mins, 1.5h both work)."
 )
-CREATE_STEP_VENUE = "Step 4 of 5 — Which venue?\nTap a recent one, or type a new name."
-CREATE_STEP_VENUE_NONE = "Step 4 of 5 — Which venue?\nType the name."
-CREATE_STEP_PLAYERS = "Step 5 of 5 — How many players?\nTap one, or type a number."
+CREATE_STEP_VENUE = "Step 4 of 6 — Which venue?\nTap a recent one, or type a new name."
+CREATE_STEP_VENUE_NONE = "Step 4 of 6 — Which venue?\nType the name."
+CREATE_STEP_COURTS = (
+    "Step 5 of 6 — Which court(s)?\n"
+    "Type it — 3, or 3 and 4, or 7-8 all work.\n"
+    "Not confirmed yet? Tap the button and add it later with /modify."
+)
+CREATE_STEP_PLAYERS = "Step 6 of 6 — How many players?\nTap one, or type a number."
 
 CREATE_REVIEW = (
     "—— REVIEW ——\n"
@@ -97,8 +102,14 @@ CREATE_REVIEW = (
     "\U0001F3F8 {when}\n"
     "⏱ {duration}\n"
     "\U0001F4CD {venue}\n"
+    "\U0001F3DF {courts}\n"
     "\U0001F465 {capacity} players\n"
     "Host: you"
+)
+
+BAD_COURTS = (
+    "That's a bit long for a court number. Keep it short — "
+    "something like 3, 3 and 4, or 7-8."
 )
 
 CREATE_DONE = "✅ Created {eid} — announced to the group."
@@ -127,7 +138,7 @@ DATE_IN_PAST = "That's in the past. Give me a date from today onwards."
 ANNOUNCE_NEW = (
     "\U0001F3F8 New session — {eid}\n"
     "{when}\n"
-    "\U0001F4CD {venue}\n"
+    "\U0001F4CD {venue} · {courts}\n"
     "\U0001F465 0/{capacity} spots taken\n"
     "Host: {host}"
 )

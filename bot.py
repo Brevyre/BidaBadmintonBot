@@ -45,8 +45,8 @@ BOT_START = time.time()
 MISSED = {"count": 0}
 
 # Conversation states
-C_DATE, C_TIME, C_DURATION, C_VENUE, C_PLAYERS, C_REVIEW = range(6)
-M_MENU, M_DATE, M_TIME, M_DURATION, M_VENUE, M_PLAYERS = range(6, 12)
+C_DATE, C_TIME, C_DURATION, C_VENUE, C_COURTS, C_PLAYERS, C_REVIEW = range(7)
+M_MENU, M_DATE, M_TIME, M_DURATION, M_VENUE, M_COURTS, M_PLAYERS = range(7, 14)
 
 
 # ============================================================ send helpers ==
@@ -273,6 +273,10 @@ def venue_buttons():
     return kb(rows), vs
 
 
+def courts_buttons():
+    return kb([[("Not confirmed yet", "cq:tbc")], [("Cancel", "ccl")]])
+
+
 def player_buttons():
     return kb([
         [("4", "cp:4"), ("6", "cp:6"), ("8", "cp:8"), ("12", "cp:12")],
@@ -383,8 +387,8 @@ async def create_venue_btn(update, context):
         return C_VENUE
     context.user_data["new"]["venue"] = vs[idx]
     await q.edit_message_reply_markup(None)
-    await q.message.reply_text(M.CREATE_STEP_PLAYERS, reply_markup=player_buttons())
-    return C_PLAYERS
+    await q.message.reply_text(M.CREATE_STEP_COURTS, reply_markup=courts_buttons())
+    return C_COURTS
 
 
 async def create_venue_txt(update, context):
@@ -393,6 +397,26 @@ async def create_venue_txt(update, context):
         await reply(update, context, M.CREATE_STEP_VENUE_NONE, ok=False)
         return C_VENUE
     context.user_data["new"]["venue"] = name[:80]
+    await reply(update, context, M.CREATE_STEP_COURTS, courts_buttons())
+    return C_COURTS
+
+
+async def create_courts_btn(update, context):
+    q = update.callback_query
+    await q.answer()
+    context.user_data["new"]["courts"] = None   # TBC
+    await q.edit_message_reply_markup(None)
+    await q.message.reply_text(M.CREATE_STEP_PLAYERS, reply_markup=player_buttons())
+    return C_PLAYERS
+
+
+async def create_courts_txt(update, context):
+    raw = update.effective_message.text
+    courts = H.clean_courts(raw)
+    if courts is None:
+        await reply(update, context, M.BAD_COURTS, courts_buttons(), ok=False)
+        return C_COURTS
+    context.user_data["new"]["courts"] = courts
     await reply(update, context, M.CREATE_STEP_PLAYERS, player_buttons())
     return C_PLAYERS
 
@@ -406,7 +430,8 @@ async def _show_review(update, context, via_query):
     n["duration"] = mins
     text = M.CREATE_REVIEW.format(
         when=H.fmt_when_range(epoch, mins), duration=H.fmt_duration(mins),
-        venue=n["venue"], capacity=n["capacity"]
+        venue=n["venue"], courts=H.fmt_courts(n.get("courts")),
+        capacity=n["capacity"]
     )
     if via_query:
         await update.callback_query.message.reply_text(
@@ -452,7 +477,7 @@ async def create_confirm(update, context):
     db.create_event(
         eid, update.effective_user.id, n["starts_at"],
         n.get("duration", config.DEFAULT_DURATION_MIN),
-        n["venue"], n["capacity"],
+        n["venue"], n["capacity"], courts=n.get("courts"),
     )
     ev = db.get_event(eid)
 
@@ -461,7 +486,7 @@ async def create_confirm(update, context):
         M.ANNOUNCE_NEW.format(
             eid=eid,
             when=H.fmt_when_range(ev["starts_at"], ev["duration_min"]),
-            venue=ev["venue"],
+            venue=ev["venue"], courts=H.fmt_courts(ev["courts"]),
             capacity=ev["capacity"], host=db.user_label(update.effective_user.id),
         ),
         kb([[("I'm in", f"ply:{eid}"), ("Can't make it", f"skp:{eid}")],
@@ -684,7 +709,7 @@ async def _begin_play(update, context, ev):
     await reply(
         update, context,
         M.PLAY_ASK_GUESTS.format(
-            eid=eid, when=H.fmt_when_range(ev["starts_at"], ev["duration_min"]), venue=ev["venue"],
+            eid=eid, when=H.fmt_when_range(ev["starts_at"], ev["duration_min"]), venue=H.venue_courts(ev),
             taken=taken, capacity=ev["capacity"]),
         kb([[("Just me", f"pg:{eid}:0"), ("+1", f"pg:{eid}:1"),
              ("+2", f"pg:{eid}:2")]]),
@@ -732,7 +757,7 @@ async def cb_play_guests(update, context):
         db.add_signup(eid, uid, 0, guests, "wait")
         pos = db.waitlist_position(eid, uid)
         await reply_private(update, context, M.PLAY_WAITLISTED.format(
-            eid=eid, pos=pos, when=when, venue=ev["venue"]))
+            eid=eid, pos=pos, when=when, venue=H.venue_courts(ev)))
         return
 
     seats_for_guests = min(guests, free - 1)
@@ -744,10 +769,10 @@ async def cb_play_guests(update, context):
         if kind == "person":
             await send_calendar(context, puid, ev)
             await dm(context, puid, M.PROMOTED_DM.format(
-                eid=eid, when=when, venue=ev["venue"]))
+                eid=eid, when=when, venue=H.venue_courts(ev)))
         else:
             await dm(context, puid, M.PROMOTED_GUESTS_DM.format(
-                n=count, eid=eid, when=when, venue=ev["venue"]))
+                n=count, eid=eid, when=when, venue=H.venue_courts(ev)))
 
     new_taken = db.seats_taken(eid)
 
@@ -758,13 +783,13 @@ async def cb_play_guests(update, context):
     elif editing:
         text = M.PLAY_UPDATED.format(
             guest_bit=H.guest_bit(seats_for_guests) or ", just you",
-            eid=eid, when=when, venue=ev["venue"],
+            eid=eid, when=when, venue=H.venue_courts(ev),
             taken=new_taken, capacity=ev["capacity"])
     else:
         full = "\nSession is now full." if new_taken >= ev["capacity"] else ""
         text = M.PLAY_OK.format(
             guest_bit=H.guest_bit(seats_for_guests), eid=eid,
-            when=when, venue=ev["venue"],
+            when=when, venue=H.venue_courts(ev),
             taken=new_taken, capacity=ev["capacity"], full_bit=full)
 
     reached = await reply_private(update, context, text)
@@ -797,7 +822,7 @@ async def _do_skip(update, context, ev):
 
     if signup is None:
         await reply_private(update, context, M.SKIP_OK.format(
-            eid=eid, when=when, venue=ev["venue"]))
+            eid=eid, when=when, venue=H.venue_courts(ev)))
         return
 
     # They were holding a seat, so free it and move the waitlist up.
@@ -806,13 +831,13 @@ async def _do_skip(update, context, ev):
         if kind == "person":
             await send_calendar(context, puid, ev)
             await dm(context, puid, M.PROMOTED_DM.format(
-                eid=eid, when=when, venue=ev["venue"]))
+                eid=eid, when=when, venue=H.venue_courts(ev)))
         else:
             await dm(context, puid, M.PROMOTED_GUESTS_DM.format(
-                n=count, eid=eid, when=when, venue=ev["venue"]))
+                n=count, eid=eid, when=when, venue=H.venue_courts(ev)))
 
     await reply_private(update, context, M.SKIP_WAS_IN.format(
-        eid=eid, when=when, venue=ev["venue"],
+        eid=eid, when=when, venue=H.venue_courts(ev),
         taken=db.seats_taken(eid), capacity=ev["capacity"]))
     await _refresh_announcement(context, eid)
 
@@ -848,11 +873,11 @@ async def _do_unplay(update, context, ev):
             await send_calendar(context, puid, ev,
                                 sign["confirmed_guests"] if sign else 0)
             await dm(context, puid, M.PROMOTED_DM.format(
-                eid=eid, when=H.fmt_when(ev["starts_at"]), venue=ev["venue"]))
+                eid=eid, when=H.fmt_when(ev["starts_at"]), venue=H.venue_courts(ev)))
         else:
             await dm(context, puid, M.PROMOTED_GUESTS_DM.format(
                 n=count, eid=eid, when=H.fmt_when(ev["starts_at"]),
-                venue=ev["venue"]))
+                venue=H.venue_courts(ev)))
 
     await reply_private(update, context, "\n".join(lines))
     await _refresh_announcement(context, eid)
@@ -867,7 +892,7 @@ async def _refresh_announcement(context, eid):
     text = M.ANNOUNCE_NEW.format(
         eid=eid,
         when=H.fmt_when_range(ev["starts_at"], ev["duration_min"]),
-        venue=ev["venue"],
+        venue=ev["venue"], courts=H.fmt_courts(ev["courts"]),
         capacity=ev["capacity"], host=db.user_label(ev["host_id"]),
     ).replace(f"0/{ev['capacity']}", f"{taken}/{ev['capacity']}")
     try:
@@ -921,7 +946,7 @@ async def cmd_invite(update, context):
         sent = await dm(context, user["tg_id"], M.INVITE_DM.format(
             host=db.user_label(update.effective_user.id), eid=ev["id"],
             when=H.fmt_when_range(ev["starts_at"], ev["duration_min"]),
-            venue=ev["venue"],
+            venue=H.venue_courts(ev),
             taken=db.seats_taken(ev["id"]), capacity=ev["capacity"]),
             kb([[("I'm in", f"ply:{ev['id']}"),
                  ("Can't make it", f"skp:{ev['id']}")]]))
@@ -994,7 +1019,7 @@ async def cmd_add(update, context):
                 sent = await dm(context, uid, M.ADD_DM.format(
                     host=host_label, eid=eid,
                     when=H.fmt_when_range(ev["starts_at"], ev["duration_min"]),
-                    venue=ev["venue"], taken=db.seats_taken(eid),
+                    venue=H.venue_courts(ev), taken=db.seats_taken(eid),
                     capacity=ev["capacity"]),
                     kb([[("Can't make it", f"skp:{eid}")]]))
                 if sent:
@@ -1009,7 +1034,7 @@ async def cmd_add(update, context):
                 await dm(context, uid, M.ADD_DM_WAITLIST.format(
                     host=host_label, eid=eid,
                     when=H.fmt_when_range(ev["starts_at"], ev["duration_min"]),
-                    venue=ev["venue"],
+                    venue=H.venue_courts(ev),
                     pos=db.waitlist_position(eid, uid) or 1))
                 lines.append(M.ADD_LINE_WAITLIST.format(
                     who=db.user_label(user)))
@@ -1082,10 +1107,10 @@ async def cmd_uninvite(update, context):
                 if kind == "person":
                     await send_calendar(context, puid, ev)
                     await dm(context, puid, M.PROMOTED_DM.format(
-                        eid=ev["id"], when=when, venue=ev["venue"]))
+                        eid=ev["id"], when=when, venue=H.venue_courts(ev)))
                 else:
                     await dm(context, puid, M.PROMOTED_GUESTS_DM.format(
-                        n=count, eid=ev["id"], when=when, venue=ev["venue"]))
+                        n=count, eid=ev["id"], when=when, venue=H.venue_courts(ev)))
             await reply(update, context, M.UNINVITE_MANUAL_DONE.format(
                 name=manual["name"], eid=ev["id"],
                 taken=db.seats_taken(ev["id"]), capacity=ev["capacity"]))
@@ -1105,17 +1130,17 @@ async def cmd_uninvite(update, context):
     db.remove_signup(ev["id"], user["tg_id"])
     promoted = db.promote_from_waitlist(ev["id"])
     await dm(context, user["tg_id"], M.UNINVITE_DM.format(
-        eid=ev["id"], when=H.fmt_when(ev["starts_at"]), venue=ev["venue"]))
+        eid=ev["id"], when=H.fmt_when(ev["starts_at"]), venue=H.venue_courts(ev)))
     for puid, kind, count in promoted:
         if kind == "person":
             await send_calendar(context, puid, ev)
             await dm(context, puid, M.PROMOTED_DM.format(
                 eid=ev["id"], when=H.fmt_when(ev["starts_at"]),
-                venue=ev["venue"]))
+                venue=H.venue_courts(ev)))
         else:
             await dm(context, puid, M.PROMOTED_GUESTS_DM.format(
                 n=count, eid=ev["id"], when=H.fmt_when(ev["starts_at"]),
-                venue=ev["venue"]))
+                venue=H.venue_courts(ev)))
 
     await reply(update, context, M.UNINVITE_DONE.format(
         handle=db.user_label(user), eid=ev["id"],
@@ -1153,7 +1178,7 @@ async def modify_start(update, context):
                 H.event_detail(ev) + "\n\n" + M.MODIFY_MENU.format(eid=ev["id"]),
                 kb([[("Date", "md:date"), ("Time", "md:time")],
                     [("Length", "md:duration"), ("Venue", "md:venue")],
-                    [("Players", "md:players")],
+                    [("Courts", "md:courts"), ("Players", "md:players")],
                     [("Done", "md:done")]]))
     return M_MENU
 
@@ -1172,6 +1197,7 @@ async def modify_pick(update, context):
         "time": (M.CREATE_STEP_TIME, time_buttons(), M_TIME),
         "duration": (M.CREATE_STEP_DURATION, duration_buttons(), M_DURATION),
         "venue": (M.CREATE_STEP_VENUE_NONE, None, M_VENUE),
+        "courts": (M.CREATE_STEP_COURTS, courts_buttons(), M_COURTS),
         "players": (M.CREATE_STEP_PLAYERS, player_buttons(), M_PLAYERS),
     }
     text, markup, state = prompts[what]
@@ -1190,16 +1216,16 @@ async def _apply_modify(update, context, changes, **fields):
     for s in people:
         await dm(context, s["user_id"], M.MODIFY_DM.format(
             eid=eid, changes=changes, when=H.fmt_when(ev["starts_at"]),
-            venue=ev["venue"]))
+            venue=H.venue_courts(ev)))
         await send_calendar(context, s["user_id"], ev, s["confirmed_guests"])
 
     promoted = db.promote_from_waitlist(eid)
     for puid, kind, count in promoted:
         await dm(context, puid, M.PROMOTED_DM.format(
-            eid=eid, when=H.fmt_when(ev["starts_at"]), venue=ev["venue"])
+            eid=eid, when=H.fmt_when(ev["starts_at"]), venue=H.venue_courts(ev))
             if kind == "person" else M.PROMOTED_GUESTS_DM.format(
                 n=count, eid=eid, when=H.fmt_when(ev["starts_at"]),
-                venue=ev["venue"]))
+                venue=H.venue_courts(ev)))
 
     context.user_data.pop("mod_eid", None)
     await reply(update, context, M.MODIFY_DONE.format(eid=eid, n=len(people)))
@@ -1266,6 +1292,20 @@ async def modify_duration(update, context):
                                duration_min=mins)
 
 
+async def modify_courts(update, context):
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_reply_markup(None)
+        return await _apply_modify(update, context, "Courts now TBC.", courts=None)
+    raw = update.effective_message.text
+    courts = H.clean_courts(raw)
+    if courts is None:
+        await reply(update, context, M.BAD_COURTS, courts_buttons(), ok=False)
+        return M_COURTS
+    return await _apply_modify(update, context,
+                               f"Now on {H.fmt_courts(courts)}.", courts=courts)
+
+
 async def modify_venue(update, context):
     name = update.effective_message.text.strip()[:80]
     if not name:
@@ -1311,7 +1351,7 @@ async def cmd_cancel_event(update, context):
     context.user_data["cancel_reason"] = reason
     n = len(db.everyone_on_event(ev["id"]))
     await reply(update, context, M.CANCEL_CONFIRM.format(
-        eid=ev["id"], when=H.fmt_when(ev["starts_at"]), venue=ev["venue"],
+        eid=ev["id"], when=H.fmt_when(ev["starts_at"]), venue=H.venue_courts(ev),
         n=n, reason=reason),
         kb([[("Yes, cancel it", f"cxy:{ev['id']}"), ("No, keep it", "cxn")]]))
 
@@ -1336,12 +1376,12 @@ async def cb_cancel_yes(update, context):
 
     for s in people:
         await dm(context, s["user_id"], M.CANCEL_DM.format(
-            eid=eid, when=H.fmt_when(ev["starts_at"]), venue=ev["venue"],
+            eid=eid, when=H.fmt_when(ev["starts_at"]), venue=H.venue_courts(ev),
             reason=reason), kb([[("See other events", "ev:all")]]))
 
     await q.message.reply_text(M.CANCEL_DONE.format(eid=eid, n=len(people)))
     await to_group(context, M.CANCEL_DM.format(
-        eid=eid, when=H.fmt_when(ev["starts_at"]), venue=ev["venue"],
+        eid=eid, when=H.fmt_when(ev["starts_at"]), venue=H.venue_courts(ev),
         reason=reason))
 
 
@@ -1365,7 +1405,7 @@ async def cmd_removeevent(update, context):
         return
     n = len(db.everyone_on_event(ev["id"]))
     await reply(update, context, M.REMOVE_CONFIRM.format(
-        eid=ev["id"], when=H.fmt_when(ev["starts_at"]), venue=ev["venue"], n=n),
+        eid=ev["id"], when=H.fmt_when(ev["starts_at"]), venue=H.venue_courts(ev), n=n),
         kb([[("Yes, remove it", f"rmy:{ev['id']}"), ("No, keep it", "rmn")]]))
 
 
@@ -1485,7 +1525,7 @@ async def cb_router(update, context):
             M.PLAY_ASK_GUESTS.format(
                 eid=eid,
                 when=H.fmt_when_range(ev["starts_at"], ev["duration_min"]),
-                venue=ev["venue"], taken=taken, capacity=ev["capacity"]),
+                venue=H.venue_courts(ev), taken=taken, capacity=ev["capacity"]),
             kb([[("Just me", f"pg:{eid}:0"), ("+1", f"pg:{eid}:1"),
                  ("+2", f"pg:{eid}:2")]]))
 
@@ -1546,10 +1586,10 @@ async def reminder_tick(context):
                 if kind == "person":
                     await send_calendar(context, puid, ev)
                     await dm(context, puid, M.PROMOTED_DM.format(
-                        eid=eid, when=when_str, venue=ev["venue"]))
+                        eid=eid, when=when_str, venue=H.venue_courts(ev)))
                 else:
                     await dm(context, puid, M.PROMOTED_GUESTS_DM.format(
-                        n=count, eid=eid, when=when_str, venue=ev["venue"]))
+                        n=count, eid=eid, when=when_str, venue=H.venue_courts(ev)))
             await _refresh_announcement(context, eid)
 
         # 1) Evening before
@@ -1562,14 +1602,14 @@ async def reminder_tick(context):
                 db.set_meta(key_day, now)
                 for s in db.confirmed_signups(eid):
                     await dm(context, s["user_id"], M.REMIND_DAY_BEFORE.format(
-                        eid=eid, when=H.fmt_when(start), venue=ev["venue"],
+                        eid=eid, when=H.fmt_when(start), venue=H.venue_courts(ev),
                         guest_bit=H.guest_bit(s["confirmed_guests"])),
                         kb([[("Can't make it", f"skp:{eid}")]]))
                 free = db.seats_free(ev)
                 if free > 0:
                     await to_group(context, M.REMIND_GROUP_OPEN.format(
                         eid=eid, free=free, when=H.fmt_when(start),
-                        venue=ev["venue"]),
+                        venue=H.venue_courts(ev)),
                         kb([[("I'm in", f"ply:{eid}"),
                              ("Can't make it", f"skp:{eid}")]]))
 
@@ -1579,7 +1619,7 @@ async def reminder_tick(context):
             db.set_meta(key_soon, now)
             for s in db.confirmed_signups(eid):
                 await dm(context, s["user_id"], M.REMIND_SOON.format(
-                    eid=eid, time=H.fmt_time(start), venue=ev["venue"]))
+                    eid=eid, time=H.fmt_time(start), venue=H.venue_courts(ev)))
 
 
 async def heartbeat(context):
@@ -1718,6 +1758,10 @@ def main():
                 CallbackQueryHandler(create_venue_btn, pattern=r"^cv:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, create_venue_txt),
             ],
+            C_COURTS: [
+                CallbackQueryHandler(create_courts_btn, pattern=r"^cq:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, create_courts_txt),
+            ],
             C_PLAYERS: [
                 CallbackQueryHandler(create_players_btn, pattern=r"^cp:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, create_players_txt),
@@ -1753,6 +1797,10 @@ def main():
             ],
             M_VENUE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, modify_venue)
+            ],
+            M_COURTS: [
+                CallbackQueryHandler(modify_courts, pattern=r"^cq:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, modify_courts),
             ],
             M_PLAYERS: [
                 CallbackQueryHandler(modify_players, pattern=r"^cp:"),

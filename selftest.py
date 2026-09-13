@@ -145,6 +145,69 @@ def main():
     check("Ann is gone", db.find_manual_player("E900", "Ann"), None)
     check("Bob remains", db.find_manual_player("E900", "Bob")["name"], "Bob")
 
+    print("\nCourts")
+    check("single number", H.fmt_courts("3"), "Court 3")
+    check("comma list", H.fmt_courts("3, 4"), "Courts 3, 4")
+    check("'and' list", H.fmt_courts("3 and 4"), "Courts 3 and 4")
+    check("range", H.fmt_courts("7-8"), "Courts 7-8")
+    check("already labelled", H.fmt_courts("Court 5"), "Court 5")
+    check("empty -> TBC", H.fmt_courts(None), "courts TBC")
+    check("blank -> TBC", H.fmt_courts("   "), "courts TBC")
+    check("typed TBC -> TBC", H.fmt_courts("tbc"), "courts TBC")
+    check("input tidied", H.clean_courts("  3 ,   4 "), "3 , 4")
+    check("too long rejected", H.clean_courts("x" * 41), None)
+    check("empty rejected", H.clean_courts(""), None)
+
+    db.create_event("E020", 100, start, 60, "Court Hall", 4, courts="3, 4")
+    e20 = db.get_event("E020")
+    check("stored on the event", e20["courts"], "3, 4")
+    check("in the detail view", "Court Hall · Courts 3, 4" in H.event_detail(e20), True)
+    check("in the one-line listing", "Courts 3, 4" in H.event_line(e20), True)
+    check("venue_courts", H.venue_courts(e20), "Court Hall · Courts 3, 4")
+
+    ics20 = H.build_ics(e20).getvalue().decode("utf-8")
+    check("ics location carries courts",
+          "LOCATION:Court Hall (Courts 3\\, 4)" in ics20, True)
+
+    db.update_event("E020", courts=None)
+    check("modify can clear to TBC", db.get_event("E020")["courts"], None)
+    check("TBC shown", "courts TBC" in H.event_detail(db.get_event("E020")), True)
+    check("ics location plain when TBC",
+          "LOCATION:Court Hall\r\n" in H.build_ics(db.get_event("E020")).getvalue().decode(), True)
+
+    # Old events created before the column existed must keep working
+    db.create_event("E021", 100, start, 60, "Old Hall", 4)
+    check("old-style event has no courts", db.get_event("E021")["courts"], None)
+    check("old-style event still renders", "courts TBC" in H.event_detail(db.get_event("E021")), True)
+
+    print("\nMigration on a pre-courts database")
+    import sqlite3 as _sq, tempfile as _tf, os as _os
+    old_path = _os.path.join(_tf.mkdtemp(), "old.db")
+    con = _sq.connect(old_path)
+    con.executescript("""
+        CREATE TABLE events (id TEXT PRIMARY KEY, host_id INTEGER NOT NULL,
+          starts_at INTEGER NOT NULL, duration_min INTEGER NOT NULL,
+          venue TEXT NOT NULL, capacity INTEGER NOT NULL,
+          status TEXT NOT NULL DEFAULT 'live', cancel_reason TEXT,
+          created_at INTEGER NOT NULL, announce_chat INTEGER, announce_msg INTEGER);
+        INSERT INTO events VALUES ('E001', 1, 1700000000, 120, 'Legacy Hall', 8,
+          'live', NULL, 1700000000, NULL, NULL);
+    """)
+    con.commit()
+    con.row_factory = _sq.Row
+    before_cols = {r["name"] for r in con.execute("PRAGMA table_info(events)")}
+    check("old db lacks courts column", "courts" in before_cols, False)
+    db._migrate(con)
+    con.commit()
+    after_cols = {r["name"] for r in con.execute("PRAGMA table_info(events)")}
+    check("migration adds it", "courts" in after_cols, True)
+    row = con.execute("SELECT * FROM events WHERE id='E001'").fetchone()
+    check("existing event survives", row["venue"], "Legacy Hall")
+    check("with courts NULL", row["courts"], None)
+    db._migrate(con)  # must be safe to run again
+    check("migration is idempotent", True, True)
+    con.close()
+
     print("\nEditing your own booking (the E007 bug)")
 
     def edit_guests(eid, uid, guests, capacity):
