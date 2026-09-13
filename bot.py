@@ -76,18 +76,49 @@ def from_group(update):
     return chat is not None and chat.type != ChatType.PRIVATE
 
 
-async def reply_private(update, context, text, markup=None, ok=True):
-    """Answer the person, never the group.
+def _late_prefix(context, ok):
+    """The offline apology, if this update sat in the queue while we were down."""
+    late = context.user_data.pop("late_when", None) if context.user_data else None
+    if not late:
+        return ""
+    tmpl = M.LATE_PREFIX_OK if ok else M.LATE_PREFIX_FAIL
+    return tmpl.format(when=late)
+
+
+async def reply_here(update, context, text, markup=None, ok=True,
+                     parse_mode=None):
+    """Answer in the chat the message came from - group included.
+
+    This is the deliberate exception. The group only ever needs to see two
+    things: a new session, and the day-before reminder. Use reply() for
+    everything else.
+    """
+    text = _late_prefix(context, ok) + text
+    if update.callback_query:
+        return await update.callback_query.message.reply_text(
+            text, reply_markup=markup, parse_mode=parse_mode)
+    return await update.effective_message.reply_text(
+        text, reply_markup=markup, parse_mode=parse_mode)
+
+
+async def reply(update, context, text, markup=None, ok=True, parse_mode=None):
+    """Answer the person privately - the default for everything.
 
     In a private chat this is an ordinary reply. In a group the answer goes to
-    their DM instead and they get a small popup only they can see, so signing
-    up doesn't spam everyone.
+    their DM instead: a button tap gets a small popup only they can see, a
+    typed command gets nothing in the group at all. Either way the group chat
+    stays quiet.
+
+    If they have never opened a chat with the bot, the DM cannot be delivered,
+    so the one message the group does see is a pointer to fix that.
     """
     if not from_group(update):
-        return await reply(update, context, text, markup, ok=ok)
+        return await reply_here(update, context, text, markup, ok=ok,
+                                parse_mode=parse_mode)
 
     uid = update.effective_user.id
-    sent = await dm(context, uid, text, markup)
+    text = _late_prefix(context, ok) + text
+    sent = await dm(context, uid, text, markup, parse_mode=parse_mode)
     q = update.callback_query
     if q is not None:
         try:
@@ -96,28 +127,17 @@ async def reply_private(update, context, text, markup=None, ok=True):
         except BadRequest:
             pass
     elif not sent:
-        # A typed command in the group, and we cannot reach them privately.
-        await reply(update, context, M.ERR_NO_DM, dm_button(context), ok=False)
+        await reply_here(update, context, M.ERR_NO_DM, dm_button(context),
+                         ok=False)
     return sent
 
 
-async def reply(update, context, text, markup=None, ok=True):
-    """Reply, prefixing the offline apology if this message arrived while down."""
-    prefix = ""
-    late = context.user_data.pop("late_when", None) if context.user_data else None
-    if late:
-        tmpl = M.LATE_PREFIX_OK if ok else M.LATE_PREFIX_FAIL
-        prefix = tmpl.format(when=late)
-
-    target = update.effective_message
-    if update.callback_query:
-        return await update.callback_query.message.reply_text(
-            prefix + text, reply_markup=markup
-        )
-    return await target.reply_text(prefix + text, reply_markup=markup)
+# Older call sites use this name; it is the same thing now.
+reply_private = reply
 
 
-async def dm(context, user_id, text, markup=None, document=None, caption=None):
+async def dm(context, user_id, text, markup=None, document=None, caption=None,
+             parse_mode=None):
     """Send a private message. Returns False if the user has never opened a chat."""
     try:
         if document is not None:
@@ -125,7 +145,8 @@ async def dm(context, user_id, text, markup=None, document=None, caption=None):
                 user_id, document=document, caption=caption
             )
         if text:
-            await context.bot.send_message(user_id, text, reply_markup=markup)
+            await context.bot.send_message(user_id, text, reply_markup=markup,
+                                           parse_mode=parse_mode)
         return True
     except (Forbidden, BadRequest) as exc:
         log.info("Could not DM %s: %s", user_id, exc)
@@ -194,14 +215,16 @@ def register(update):
 
 async def cmd_start(update, context):
     u = update.effective_user
-    existed = db.upsert_user(u.id, u.username, u.first_name, dm_ok=1)
+    # Only a private /start proves we can DM them.
+    existed = db.upsert_user(u.id, u.username, u.first_name,
+                             dm_ok=None if from_group(update) else 1)
     tmpl = M.START_AGAIN if existed else M.START_NEW
     await reply(update, context, tmpl.format(name=u.first_name or "there"))
 
 
 async def cmd_help(update, context):
     register(update)
-    await update.effective_message.reply_text(M.HELP, parse_mode=ParseMode.MARKDOWN)
+    await reply(update, context, M.HELP, parse_mode=ParseMode.MARKDOWN)
 
 
 async def cmd_whoami(update, context):
@@ -222,11 +245,11 @@ async def cmd_sethere(update, context):
         return
     chat = update.effective_chat
     if chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
-        await reply(update, context, M.SETHERE_NOT_GROUP, ok=False)
+        await reply_here(update, context, M.SETHERE_NOT_GROUP, ok=False)
         return
     config.GROUP_CHAT_ID = chat.id
     db.set_meta("group_chat_id", chat.id)
-    await reply(
+    await reply_here(
         update, context,
         M.SETHERE_DONE + f"\n\nMake it permanent: set GROUP_CHAT_ID={chat.id}",
     )
@@ -654,8 +677,18 @@ async def cmd_csv(update, context):
     ev = await resolve_event(update, context, context.args, "csv")
     if ev is None:
         return
+    doc = H.build_csv(ev)
+    if from_group(update):
+        try:
+            await context.bot.send_document(update.effective_user.id, document=doc,
+                                            filename=f"{ev['id']}.csv",
+                                            caption=M.CSV_CAPTION)
+        except (Forbidden, BadRequest):
+            await reply_here(update, context, M.ERR_NO_DM, dm_button(context),
+                             ok=False)
+        return
     await update.effective_message.reply_document(
-        document=H.build_csv(ev), filename=f"{ev['id']}.csv", caption=M.CSV_CAPTION
+        document=doc, filename=f"{ev['id']}.csv", caption=M.CSV_CAPTION
     )
 
 
@@ -881,6 +914,22 @@ async def _do_unplay(update, context, ev):
 
     await reply_private(update, context, "\n".join(lines))
     await _refresh_announcement(context, eid)
+
+
+async def _mark_announcement_cancelled(context, ev, reason):
+    """Rewrite the group announcement in place - no new message."""
+    if not ev["announce_chat"] or not ev["announce_msg"]:
+        return
+    text = M.ANNOUNCE_CANCELLED.format(
+        eid=ev["id"],
+        when=H.fmt_when_range(ev["starts_at"], ev["duration_min"]),
+        venue=ev["venue"], courts=H.fmt_courts(ev["courts"]), reason=reason)
+    try:
+        await context.bot.edit_message_text(
+            chat_id=ev["announce_chat"], message_id=ev["announce_msg"],
+            text=text, reply_markup=None)
+    except BadRequest:
+        pass
 
 
 async def _refresh_announcement(context, eid):
@@ -1363,10 +1412,10 @@ async def cb_cancel_yes(update, context):
     eid = q.data.split(":")[1]
     ev = db.get_event(eid)
     if ev is None or ev["status"] == "cancelled":
-        await q.message.reply_text(M.ERR_NO_EVENT.format(eid=eid))
+        await reply(update, context, M.ERR_NO_EVENT.format(eid=eid))
         return
     if not H.can_manage(ev, q.from_user.id):
-        await q.message.reply_text(M.ERR_NOT_HOST.format(
+        await reply(update, context, M.ERR_NOT_HOST.format(
             eid=eid, host=db.user_label(ev["host_id"])))
         return
 
@@ -1379,10 +1428,8 @@ async def cb_cancel_yes(update, context):
             eid=eid, when=H.fmt_when(ev["starts_at"]), venue=H.venue_courts(ev),
             reason=reason), kb([[("See other events", "ev:all")]]))
 
-    await q.message.reply_text(M.CANCEL_DONE.format(eid=eid, n=len(people)))
-    await to_group(context, M.CANCEL_DM.format(
-        eid=eid, when=H.fmt_when(ev["starts_at"]), venue=H.venue_courts(ev),
-        reason=reason))
+    await reply(update, context, M.CANCEL_DONE.format(eid=eid, n=len(people)))
+    await _mark_announcement_cancelled(context, ev, reason)
 
 
 async def cb_cancel_no(update, context):
@@ -1390,7 +1437,7 @@ async def cb_cancel_no(update, context):
     await q.answer()
     await q.edit_message_reply_markup(None)
     context.user_data.pop("cancel_reason", None)
-    await q.message.reply_text(M.CANCEL_ABORTED)
+    await reply(update, context, M.CANCEL_ABORTED)
 
 
 # ================================================================= admin ====
@@ -1414,18 +1461,18 @@ async def cb_remove_yes(update, context):
     await q.answer()
     await q.edit_message_reply_markup(None)
     if not H.is_admin(q.from_user.id):
-        await q.message.reply_text(M.ERR_ADMIN_ONLY)
+        await reply(update, context, M.ERR_ADMIN_ONLY)
         return
     eid = q.data.split(":")[1]
     db.remove_event(eid)
-    await q.message.reply_text(M.REMOVE_DONE.format(eid=eid))
+    await reply(update, context, M.REMOVE_DONE.format(eid=eid))
 
 
 async def cb_remove_no(update, context):
     q = update.callback_query
     await q.answer()
     await q.edit_message_reply_markup(None)
-    await q.message.reply_text(M.REMOVE_ABORTED)
+    await reply(update, context, M.REMOVE_ABORTED)
 
 
 async def cmd_clearevents(update, context):
@@ -1511,7 +1558,7 @@ async def cb_router(update, context):
         ev = db.get_event(eid)
         if ev is None:
             await q.answer()
-            return await q.message.reply_text(M.ERR_NO_EVENT.format(eid=eid))
+            return await reply(update, context, M.ERR_NO_EVENT.format(eid=eid))
         # No q.answer() here - reply_private answers with the right popup.
         return await _begin_play(update, context, ev)
 
@@ -1519,7 +1566,7 @@ async def cb_router(update, context):
         await q.answer()
         ev = db.get_event(eid)
         if ev is None:
-            return await q.message.reply_text(M.ERR_NO_EVENT.format(eid=eid))
+            return await reply(update, context, M.ERR_NO_EVENT.format(eid=eid))
         taken = db.seats_taken(eid)
         return await reply_private(update, context,
             M.PLAY_ASK_GUESTS.format(
@@ -1533,21 +1580,21 @@ async def cb_router(update, context):
         ev = db.get_event(eid)
         if ev is None:
             await q.answer()
-            return await q.message.reply_text(M.ERR_NO_EVENT.format(eid=eid))
+            return await reply(update, context, M.ERR_NO_EVENT.format(eid=eid))
         return await _do_skip(update, context, ev)
 
     if kind == "unp":
         await q.answer()
         ev = db.get_event(eid)
         if ev is None:
-            return await q.message.reply_text(M.ERR_NO_EVENT.format(eid=eid))
+            return await reply(update, context, M.ERR_NO_EVENT.format(eid=eid))
         return await _do_unplay(update, context, ev)
 
     if kind == "shw":
         await q.answer()
         ev = db.get_event(eid)
         if ev is None:
-            return await q.message.reply_text(M.ERR_NO_EVENT.format(eid=eid))
+            return await reply(update, context, M.ERR_NO_EVENT.format(eid=eid))
         return await _show_event(update, context, ev)
 
     if kind == "ics":
@@ -1559,8 +1606,7 @@ async def cb_router(update, context):
         ok = await send_calendar(context, q.from_user.id, ev,
                                  sign["confirmed_guests"] if sign else 0)
         if not ok:
-            await q.message.reply_text(M.ERR_NO_DM,
-                                       reply_markup=dm_button(context))
+            await reply_here(update, context, M.ERR_NO_DM, dm_button(context))
         return
 
     await q.answer()
@@ -1605,13 +1651,21 @@ async def reminder_tick(context):
                         eid=eid, when=H.fmt_when(start), venue=H.venue_courts(ev),
                         guest_bit=H.guest_bit(s["confirmed_guests"])),
                         kb([[("Can't make it", f"skp:{eid}")]]))
+                # The day-before post is one of only two things the group
+                # ever sees, so it goes out whether or not there is room.
                 free = db.seats_free(ev)
+                when_r = H.fmt_when_range(start, ev["duration_min"])
                 if free > 0:
                     await to_group(context, M.REMIND_GROUP_OPEN.format(
-                        eid=eid, free=free, when=H.fmt_when(start),
+                        eid=eid, free=free, when=when_r,
                         venue=H.venue_courts(ev)),
                         kb([[("I'm in", f"ply:{eid}"),
                              ("Can't make it", f"skp:{eid}")]]))
+                else:
+                    await to_group(context, M.REMIND_GROUP_FULL.format(
+                        eid=eid, when=when_r, venue=H.venue_courts(ev),
+                        capacity=ev["capacity"]),
+                        kb([[("Details", f"shw:{eid}")]]))
 
         # 2) Shortly before
         key_soon = f"rem:{eid}:soon"
@@ -1659,10 +1713,10 @@ async def on_error(update, context):
     log.exception("Handler error", exc_info=context.error)
     try:
         if isinstance(update, Update) and update.effective_message:
-            await update.effective_message.reply_text(
-                "Something went wrong on my end, sorry. "
-                "Try again, and tell the admin if it keeps happening."
-            )
+            await reply(update, context,
+                        "Something went wrong on my end, sorry. "
+                        "Try again, and tell the admin if it keeps happening.",
+                        ok=False)
     except Exception:
         pass
 

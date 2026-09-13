@@ -302,11 +302,20 @@ for - 1 hour, 1.5, 2 or 3, or type anything from 30 minutes to 6 hours. This
 sets the calendar file's finish time, so a 1-hour game no longer blocks out two
 hours in everyone's diary. Change it later with `/modify` -> Length.
 
-**Signing up is private.** Tapping "I'm in" on the group announcement does not
-put anything in the group chat. The person gets a small popup only they can see,
-and the confirmation plus calendar file arrive in their DM. The only thing that
-changes in the group is the spot count on the original announcement, edited in
-place.
+**The group only ever sees two things.** A new session being announced, and
+a reminder the evening before (with the spot count, or "full house"). That is
+it. Every command, every button, every confirmation, error and cancellation
+goes to the person's DM instead - even when they typed the command in the
+group. Button taps in the group get a small popup only the tapper sees.
+
+Two in-place edits keep the group's record accurate without new messages: the
+announcement's spot count updates as people join or leave, and a cancelled
+session's announcement is rewritten to say CANCELLED (everyone signed up is
+DMed as well).
+
+The one exception: if someone who has never pressed Start types a command in
+the group, the bot cannot DM them, so it answers once in the group with a
+button to open a private chat. After that, silence.
 
 **Saying no is tracked.** `/skip E001` (or the "Can't make it" button) records
 that someone is not coming. It works whether or not they had signed up - if they

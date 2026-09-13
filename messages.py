@@ -289,6 +289,18 @@ REMIND_GROUP_OPEN = (
     "{when} · {venue}"
 )
 
+REMIND_GROUP_FULL = (
+    "\U0001F3F8 {eid} is tomorrow — full house, {capacity} players.\n"
+    "{when} · {venue}"
+)
+
+ANNOUNCE_CANCELLED = (
+    "❌ CANCELLED — {eid}\n"
+    "{when}\n"
+    "\U0001F4CD {venue} · {courts}\n"
+    "Reason: {reason}"
+)
+
 # ------------------------------------------------------------------ lists ---
 
 NO_EVENTS = "Nothing on the calendar yet. Be the first — /create"
